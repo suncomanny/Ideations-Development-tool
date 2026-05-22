@@ -1,0 +1,26 @@
+{
+  "project_name": "sunco-product-opportunity-engine",
+  "cache_max_age_days": 30,
+  "primary_competitor_channel": "Amazon",
+  "secondary_competitor_channel": "Home Depot Marketplace",
+  "competitor_tier_order": ["Tier 1", "Tier 2", "Tier 3"],
+  "image_preference_order": ["Amazon", "Competitor PDP", "Competitor category page", "Other ecommerce"],
+  "output_timestamp_format": "%Y-%m-%d_%H%M",
+  "excel_validation": {
+    "use_excel_com_on_windows_when_available": true,
+    "required_true_gap_sheets": [
+      "Summary",
+      "Recommendations",
+      "Sources and Audit",
+      "Amazon Recommendations",
+      "Amazon Source Audit",
+      "Run Audit"
+    ],
+    "required_prd_sheets": [
+      "Instructions",
+      "Ideations",
+      "Source Mapping",
+      "Run Audit"
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "decorative_fixture": {
+    "notes": "Defaults used only when the Step 1 evidence does not provide a stronger value. These are intended as research starting points, not locked PRD specs.",
+    "defaults": {
+      "voltage": "120V",
+      "selectable_wattage": "No",
+      "selectable_cct": "No",
+      "cri": "80+ target if bulbs are included",
+      "dimmable": "Yes",
+      "dimming_type": "TRIAC / phase-cut with compatible bulbs",
+      "frequency": "60Hz",
+      "driver_type": "Replaceable lamp sockets unless integrated LED is selected",
+      "ip_rating": null,
+      "moisture_rating": "Dry rated indoor use; damp-rated variant only if bathroom or covered damp use is intended",
+      "indoor_outdoor_use": "Indoor",
+      "wiring_type": "Hardwired",
+      "emergency_battery": "No",
+      "run_time": null,
+      "charge_time": null,
+      "switching_time": null,
+      "motion_sensor": "No",
+      "motion_duration": null,
+      "daylight_sensor_auto_dimming": "No",
+      "smart_connected": "No",
+      "linkable": "No",
+      "target_margin_shopify": "60% target",
+      "target_margin_amazon": "70% target",
+      "cost_type": "Landed",
+      "certifications": "ETL, UL",
+      "lifetime_hours": "Bulb-dependent; fixture electrical components TBD",
+      "warranty": "3 year target; validate against supplier warranty and Sunco category standard",
+      "priority_channels": "Amazon, Sunco.com, Home Depot Marketplace",
+      "stackline_data": "Yes"
+    }
+  },
+  "chandeliers": {
+    "inherits": "decorative_fixture",
+    "keywords": [
+      "chandelier",
+      "wagon wheel",
+      "linear island",
+      "island chandelier",
+      "dining room",
+      "farmhouse"
+    ],
+    "defaults": {
+      "subcategory": "Chandeliers",
+      "bulb_shape": "LED filament bulbs optional",
+      "beam_angle": null,
+      "target_msrp": "TBD from competitor median by size/bulb count",
+      "target_vendor_cost": "TBD after target MSRP and margin gate"
+    }
+  }
+}

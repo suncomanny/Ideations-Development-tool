@@ -1,0 +1,58 @@
+﻿PRD Research Collect
+
+Do not edit repo code.
+Do not change templates.
+Do not rebuild reports.
+Do not publish anything.
+Codex has already prepared the session, seeded structured/local context, and narrowed this handoff to the exact missing raw collection work listed below.
+Do only the missing raw competitor collection work for this existing session batch.
+
+Use these exact paths:
+- Repo:
+  C:\Users\Sunco\Projects\PRD-research-tool
+- Session root:
+  {{SESSION_ROOT}}
+- Shared Stackline root:
+  C:\Users\Sunco\Sunco Lighting\Product - Manny Tools\PRD Research\Working Tool Files\Stackline Data
+- Shared template:
+  C:\Users\Sunco\Sunco Lighting\Product - Manny Tools\PRD Research\Working Tool Files\Templates\PRD_Research_Template.xlsx
+- Resource root:
+  C:\Users\Sunco\OneDrive - Sunco Lighting\Documents\Claude Workbook\Manny Sunco\Resources
+- Shared reports root:
+  C:\Users\Sunco\Sunco Lighting\Product - Manny Tools\PRD Research\Working Tool Files\Research Reports
+- Category owner mapping:
+  C:\Users\Sunco\Projects\PRD-research-tool\config\category_owner_reference.json
+
+Batch scope:
+- Batch label:
+  {{BATCH_LABEL}}
+- Artifact count:
+  {{ARTIFACT_COUNT}}
+- Row count:
+  {{ROW_COUNT}}
+
+Scope limit:
+Only process these artifacts:
+{{ARTIFACT_SCOPE}}
+
+Ideation context:
+{{IDEATION_SCOPE}}
+
+Read only these packet files:
+{{PACKET_SCOPE}}
+
+Rules:
+1. Preflight the paths first. If any required path is inaccessible, stop immediately and report only the missing path(s).
+2. Read only the session manifest plus the packet files listed above.
+3. Complete only the artifacts listed in this batch.
+4. Write artifacts to the exact expected output files.
+5. Do not overwrite valid completed raw artifacts.
+6. Do not process any rows or channels outside this batch.
+7. Do not run normalization, analysis, report building, or publishing.
+8. Stop after this batch is complete or clearly blocked.
+
+At the end, reply with only:
+- session path
+- batch complete or blocked
+- blocked artifacts if any
+- a short plain-English summary
