@@ -135,7 +135,8 @@ def set_default_layout(ws) -> None:
 
 def safe_sheet_title(base: str, used: set[str]) -> str:
     """Create a workbook-safe, unique worksheet title."""
-    text = (base or "Report").replace("/", " ").replace("\\", " ").replace(":", " ").strip()
+    text = re.sub(r"[\[\]\*?/\\:]", " ", base or "Report").strip()
+    text = re.sub(r"\s+", " ", text)
     text = text[:31] or "Report"
     candidate = text
     suffix = 2

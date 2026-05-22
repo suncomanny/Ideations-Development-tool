@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -182,7 +183,9 @@ def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
         headers = [ws.cell(1, col).value for col in range(1, ws.max_column + 1)]
         for row_index in range(2, ws.max_row + 1):
             record = {str(headers[col - 1]): ws.cell(row_index, col).value for col in range(1, len(headers) + 1)}
-            if record.get("Recommendation") and record.get("Priority") == "High" and record.get("Confidence") == "High":
+            recommendation = record.get("Recommendation")
+            is_supplemental = str(recommendation or "").strip().lower().startswith("[supplemental candidate]")
+            if recommendation and ((record.get("Priority") == "High" and record.get("Confidence") == "High") or is_supplemental):
                 exact_source_names.add(str(record.get("Recommendation")).strip().lower())
                 rows.append({
                     "source": "Sunco.com/ecommerce",
@@ -204,7 +207,8 @@ def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
             recommendation = record.get("Amazon-channel recommendation")
             confidence = str(record.get("Confidence") or "").strip().lower()
             is_supporting_evidence = str(recommendation or "").strip().lower() in exact_source_names
-            if recommendation and record.get("Priority") == "High" and (confidence == "high" or is_supporting_evidence):
+            is_supplemental = str(recommendation or "").strip().lower().startswith("[supplemental candidate]")
+            if recommendation and ((record.get("Priority") == "High" and (confidence == "high" or is_supporting_evidence)) or is_supplemental):
                 classification = record.get("Amazon classification") or "Amazon recommendation"
                 rows.append({
                     "source": "Amazon",
@@ -303,6 +307,18 @@ def _extract_light_count(text: str) -> str | None:
     return None
 
 
+def _extract_light_count_values(text: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(r"\b(\d+)\s*(?:-|to)\s*(\d+)\s*light\b", text, flags=re.IGNORECASE):
+        for value in [match.group(1), match.group(2)]:
+            if value not in values:
+                values.append(value)
+    for value in re.findall(r"\b(\d+)\s*-?\s*light\b", text, flags=re.IGNORECASE):
+        if value not in values:
+            values.append(value)
+    return values
+
+
 def _extract_sizes(text: str) -> list[str]:
     return [
         re.sub(r"\s+", " ", match.group(0)).replace("inch", "in").strip()
@@ -345,6 +361,19 @@ def _infer_mounting(text: str) -> str:
     return "Ceiling / chain-hanging or rod-hung"
 
 
+def _infer_form_factor_label(text: str) -> str:
+    lowered = text.lower()
+    if "wagon wheel" in lowered:
+        return "wagon wheel chandelier"
+    if "linear" in lowered or "island" in lowered:
+        return "linear island chandelier"
+    if "rattan" in lowered or "woven" in lowered:
+        return "rattan/woven pendant"
+    if "chandelier" in lowered:
+        return "chandelier"
+    return "fixture"
+
+
 def _infer_size_form_factor(item: dict[str, Any], text: str) -> str:
     name = str(item.get("name") or "").strip()
     lowered = text.lower()
@@ -362,6 +391,16 @@ def _infer_size_form_factor(item: dict[str, Any], text: str) -> str:
     if sizes:
         pieces.append("; ".join(sizes) + " target")
     return ", ".join(piece for piece in pieces if piece)
+
+
+def _sample_mentions_light_count(sample: dict[str, Any], light_count: str | None) -> bool:
+    if not light_count:
+        return False
+    number = re.sub(r"\D+", "", str(light_count))
+    if not number:
+        return False
+    haystack = " ".join(str(sample.get(key) or "") for key in ["product", "note", "url"]).lower()
+    return bool(re.search(rf"\b{re.escape(number)}\s*[- ]?light\b", haystack, flags=re.IGNORECASE))
 
 
 def _build_known_competitors(item: dict[str, Any]) -> str:
@@ -412,10 +451,22 @@ def _format_money(value: float) -> str:
 
 
 def _market_msrp_target(item: dict[str, Any], market_samples: list[dict[str, Any]]) -> dict[str, Any] | None:
-    samples = [
+    matched_samples = [
         sample for sample in _market_samples_for_item(item, market_samples)
-        if sample.get("use_for_base_msrp", True) is not False and isinstance(sample.get("price"), (int, float))
+        if isinstance(sample.get("price"), (int, float))
     ]
+    target_light_count = str(item.get("_target_light_count") or "").strip()
+    pricing_basis = "comparable listings"
+    if target_light_count:
+        light_count_samples = [sample for sample in matched_samples if _sample_mentions_light_count(sample, target_light_count)]
+        pricing_basis = (
+            f"exact {target_light_count}-light comparable listings"
+            if light_count_samples
+            else f"nearest parent-family comparable listings; no exact {target_light_count}-light sample was found in the local cache"
+        )
+        samples = light_count_samples or matched_samples
+    else:
+        samples = [sample for sample in matched_samples if sample.get("use_for_base_msrp", True) is not False]
     prices = [float(sample["price"]) for sample in samples]
     if not prices:
         return None
@@ -435,16 +486,91 @@ def _market_msrp_target(item: dict[str, Any], market_samples: list[dict[str, Any
     return {
         "target": target,
         "text": (
-            f"{_format_money(target)} market MSRP target; based on p50-p55 of comparable listings "
+            f"{_format_money(target)} market MSRP target; based on p50-p55 of {pricing_basis} "
             f"({_format_money(p50)}-{_format_money(p55)}). Validate against live pricing before launch."
         ),
         "vendor_cost_text": (
             f"Backsolve from AQ MSRP target {_format_money(target)} after supplier quotes; "
             "do not use margin targets as the initial MSRP anchor."
         ),
-        "notes": "Market MSRP samples: " + "; ".join(sample_labels),
+        "notes": f"Market MSRP pricing basis: {pricing_basis}. Samples: " + "; ".join(sample_labels),
         "links": "\n".join(sample_links),
     }
+
+
+def _variant_size_form_factor(text: str, light_count: str | None, size: str | None) -> str:
+    form_factor = _infer_form_factor_label(text)
+    lowered = text.lower()
+    if light_count == "1" and ("rattan" in lowered or "woven" in lowered):
+        form_factor = "dome rattan/woven pendant"
+    elif light_count == "3" and ("rattan" in lowered or "woven" in lowered):
+        form_factor = "linear island rattan/woven pendant"
+    pieces = []
+    if light_count:
+        pieces.append(f"{light_count}-light")
+    pieces.append(form_factor)
+    if size:
+        pieces.append(size)
+    return ", ".join(pieces)
+
+
+def _variant_label(text: str, light_count: str | None, size: str | None) -> str:
+    form_factor = _infer_form_factor_label(text)
+    lowered = text.lower()
+    if light_count == "1" and ("rattan" in lowered or "woven" in lowered):
+        form_factor = "dome rattan/woven pendant"
+    elif light_count == "3" and ("rattan" in lowered or "woven" in lowered):
+        form_factor = "linear rattan/woven island pendant"
+    finish = _infer_finish(text)
+    parts: list[str] = []
+    if light_count:
+        parts.append(f"{light_count}-light")
+    if size:
+        parts.append(size)
+    parts.append(form_factor)
+    if finish:
+        parts.append(finish.replace(" target", ""))
+    return " ".join(parts)
+
+
+def _candidate_name(base_name: str, label: str) -> str:
+    supplemental_prefix = "[Supplemental candidate] "
+    prefix = supplemental_prefix if base_name.startswith(supplemental_prefix) else ""
+    clean_base = base_name.removeprefix(supplemental_prefix).strip()
+    return f"{prefix}{clean_base} - {label}"
+
+
+def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[str, Any]]:
+    text = _evidence_text(item)
+    base_name = str(item.get("name") or "").strip()
+    light_counts = _extract_light_count_values(text)
+    sizes = _extract_sizes(text)
+    if category.slug != "chandeliers" and len(light_counts) <= 1 and len(sizes) <= 1:
+        return [item]
+    if not light_counts and len(sizes) <= 1:
+        return [item]
+
+    candidates: list[dict[str, Any]] = []
+    max_candidates = 4
+    for index, light_count in enumerate(light_counts[:max_candidates]):
+        size = sizes[index] if index < len(sizes) else None
+        label = _variant_label(text, light_count, size)
+        candidate = deepcopy(item)
+        candidate["name"] = _candidate_name(base_name, label)
+        candidate["_parent_opportunity"] = base_name
+        candidate["_target_light_count"] = light_count
+        candidate["_target_size"] = size or "TBD from supplier and live market refresh"
+        candidate["_sku_candidate_rationale"] = (
+            "Split from the parent opportunity because Step 1 evidence or PM action named this as a "
+            "distinct SKU-level option. Step 3 should research this row as one candidate SKU, not as a broad family."
+        )
+        candidate["_field_overrides"] = {
+            "size_form_factor": _variant_size_form_factor(text, light_count, size),
+            "wattage_primary": f"Bulb-dependent; target {light_count}-light replaceable LED bulb design",
+        }
+        candidates.append(candidate)
+
+    return candidates or [item]
 
 
 def _url_validation_summary(cache: dict[str, dict[str, Any]]) -> str:
@@ -473,6 +599,9 @@ def _build_research_notes(
     notes = [
         f"Source: {item.get('source')}",
         f"Classification: {item.get('classification')}",
+        f"Parent opportunity: {item.get('_parent_opportunity')}" if item.get("_parent_opportunity") else None,
+        f"SKU candidate target: {item.get('_target_light_count')}-light; size target {item.get('_target_size')}" if item.get("_target_light_count") else None,
+        f"SKU candidate rationale: {item.get('_sku_candidate_rationale')}" if item.get("_sku_candidate_rationale") else None,
         f"Evidence: {item.get('why')}",
         f"Sunco check: {item.get('sunco_check')}",
         f"Recommended action: {item.get('action')}",
@@ -550,6 +679,9 @@ def _enrich_item(
     if pricing:
         enriched["target_msrp"] = pricing["text"]
         enriched["target_vendor_cost"] = pricing["vendor_cost_text"]
+    for key, value in dict(item.get("_field_overrides") or {}).items():
+        if key in COLUMN_MAP and value:
+            enriched[key] = value
     enriched["research_notes"] = _build_research_notes(item, enriched, profile, pricing, link_validation)
     enriched["_link_validation"] = link_validation
     return enriched
@@ -594,23 +726,35 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
     ws["B1"] = category.owner
     ws["E1"] = f"Prepared from {selected_gap.name} on {timestamp()}"
     rows = _read_gap_rows(selected_gap)
+    candidate_rows: list[dict[str, Any]] = []
+    for item in rows:
+        candidate_rows.extend(_sku_candidate_items(category, item))
     market_samples, market_sample_path = _load_market_price_samples(paths, category)
     url_validation_cache: dict[str, dict[str, Any]] = {}
     enriched_rows: list[dict[str, Any]] = []
-    for offset, item in enumerate(rows[:100], start=4):
+    for offset, item in enumerate(candidate_rows[:100], start=4):
         enriched_rows.append(_fill_ideation_row(ws, offset, category, item, market_samples, url_validation_cache))
 
     if "Source Mapping" in workbook.sheetnames:
         mapping = workbook["Source Mapping"]
         if mapping.max_row < 1:
             mapping.append(["Ideation Name", "Why selected", "Key evidence used", "Reference SKU rationale"])
-        for item, enriched in zip(rows[:100], enriched_rows):
+        for item, enriched in zip(candidate_rows[:100], enriched_rows):
             evidence_parts = [str(item.get("why") or ""), str(item.get("url") or "")]
             if enriched.get("_link_validation"):
                 evidence_parts.append("Link validation: " + str(enriched.get("_link_validation")))
+            if item.get("_sku_candidate_rationale"):
+                evidence_parts.append("SKU candidate: " + str(item.get("_sku_candidate_rationale")))
             mapping.append([
-                item.get("name"),
-                f"{item.get('classification')} with High priority and High confidence",
+                enriched.get("ideation_name") or item.get("name"),
+                (
+                    f"{item.get('classification')} with High priority and High confidence"
+                    + (
+                        f"; parent opportunity: {item.get('_parent_opportunity')}"
+                        if item.get("_parent_opportunity")
+                        else ""
+                    )
+                ),
                 " | ".join(part for part in evidence_parts if part),
                 "Use Sunco.com/Shopify SKU first when available; otherwise refresh should use best-selling item by category revenue.",
             ])
@@ -629,7 +773,9 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             ("Owner", category.owner),
             ("Generated", timestamp()),
             ("Source Step 1 workbook", str(selected_gap)),
-            ("Rows selected", str(len(rows[:100]))),
+            ("Step 1 opportunities selected", str(len(rows))),
+            ("Step 2 SKU candidate rows", str(len(candidate_rows[:100]))),
+            ("SKU expansion rule", "Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct SKU-level options such as light count, form factor, or size. It does not force a minimum row count."),
             ("Selection rule", "Priority = High and Confidence = High; true, feature, and style gaps are all allowed. Matching ideation names are merged across source tabs."),
             ("Reference SKU rule", "Sunco.com/Shopify SKU first; if absent, use best-selling item by category revenue."),
             ("MSRP target rule", "When market price samples exist, Target MSRP is based on the 50th-55th percentile of comparable listings and is independent from margin targets."),

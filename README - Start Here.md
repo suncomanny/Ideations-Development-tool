@@ -18,7 +18,9 @@ Step 1 includes its selection rationale in the workbook. Check `Summary`, `Sourc
 
 Use this as the answer when asked: "How did we determine those ideations would be successful over others?" The tool is not claiming guaranteed success; it is ranking higher-probability ideas for research based on competitor demand signals, Sunco coverage gaps, and PM actionability.
 
-Step 2 and Step 3 use a clean handoff contract. Step 2 can still carry notes and validation guidance, but Step 3 only scores concise customer-facing feature and certification signals. Non-applicable values, `TBD`, `N/A`, optional bulb guidance, and supplier-validation prose are ignored or converted into cleaner checks such as `E12 socket`, `E26 socket`, `ETL`, and `UL`.
+Step 2 and Step 3 use a clean handoff contract. Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct options such as bulb count, size, or form factor. It does not force a minimum row count. Step 3 then creates one final research workbook with one sheet per Step 2 row, so SKU-level permutations are researched separately without creating multiple workbooks.
+
+Step 2 can still carry notes and validation guidance, but Step 3 only scores concise customer-facing feature and certification signals. Non-applicable values, `TBD`, `N/A`, optional bulb guidance, and supplier-validation prose are ignored or converted into cleaner checks such as `E12 socket`, `E26 socket`, `ETL`, and `UL`.
 
 Step 3 has two phases:
 
