@@ -61,6 +61,10 @@ CHANNEL_ORDER = [
     "brand_sites",
 ]
 
+FEATURE_SIGNAL_PROFILE_PATH = (
+    Path(__file__).resolve().parents[1] / "config" / "category_feature_signal_profiles.json"
+)
+
 CHANNEL_LABELS = {
     "amazon": "Amazon",
     "home_depot": "Home Depot",
@@ -166,6 +170,32 @@ def unique_preserve_order(values: list[str]) -> list[str]:
         seen.add(marker)
         result.append(value)
     return result
+
+
+def label_key(value: Any) -> str:
+    """Normalize values for profile and keyword matching."""
+    text = normalize_text(value) or ""
+    text = text.lower().replace("0-10v", "0 10v")
+    text = re.sub(r"[-/]", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def load_category_feature_signal_profiles() -> dict[str, Any]:
+    """Load the backend category feature-signal database."""
+    if not FEATURE_SIGNAL_PROFILE_PATH.exists():
+        return {"profiles": []}
+    return json.loads(FEATURE_SIGNAL_PROFILE_PATH.read_text(encoding="utf-8"))
+
+
+def nested_value(source: dict[str, Any], path: str) -> Any:
+    """Read a dotted config path from a nested packet-shaped dict."""
+    current: Any = source
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
 
 
 def parse_number(value: Any) -> float | None:
@@ -394,6 +424,131 @@ def clean_certification_labels(values: list[Any] | None) -> list[str]:
     return unique_preserve_order(output)
 
 
+def profile_match_score(profile: dict[str, Any], ideation: dict[str, Any], haystack: str) -> int:
+    identity = ideation["identity"]
+    category = label_key(identity.get("category"))
+    subcategory = label_key(identity.get("subcategory"))
+    category_hits = [
+        label_key(value)
+        for value in profile.get("category_matches") or []
+        if label_key(value) == category
+    ]
+    subcategory_hits = [
+        label_key(value)
+        for value in profile.get("subcategory_matches") or []
+        if label_key(value) == subcategory
+    ]
+    keyword_hits = [
+        label_key(value)
+        for value in profile.get("match_keywords") or []
+        if label_key(value) and label_key(value) in haystack
+    ]
+    return (40 * len(category_hits)) + (100 * len(subcategory_hits)) + len(keyword_hits)
+
+
+def select_feature_signal_profile(ideation: dict[str, Any]) -> dict[str, Any]:
+    config = load_category_feature_signal_profiles()
+    profiles = config.get("profiles") or []
+    generic = next((profile for profile in profiles if profile.get("id") == "generic_lighting"), {})
+    identity = ideation["identity"]
+    physical = ideation["physical_mechanical"]
+    features = ideation["features_requirements"]
+    haystack = " ".join(
+        label_key(value)
+        for value in [
+            identity.get("category"),
+            identity.get("subcategory"),
+            identity.get("ideation_name"),
+            physical.get("size_form_factor"),
+            physical.get("finish_color"),
+            physical.get("material"),
+            physical.get("mounting_type"),
+            features.get("bulb_base_type"),
+        ]
+        if label_key(value)
+    )
+    best_profile = generic
+    best_score = -1
+    for profile in profiles:
+        score = profile_match_score(profile, ideation, haystack)
+        if score > best_score:
+            best_score = score
+            best_profile = profile
+    return best_profile or {}
+
+
+def extract_light_counts(text: str) -> list[str]:
+    counts: list[str] = []
+    for match in re.finditer(r"\b(\d+)\s*(?:-|to)\s*(\d+)\s*light\b", text, flags=re.IGNORECASE):
+        for value in [match.group(1), match.group(2)]:
+            counts.append(f"{value}-light")
+    for value in re.findall(r"\b(\d+)\s*-?\s*light\b", text, flags=re.IGNORECASE):
+        counts.append(f"{value}-light")
+    return unique_preserve_order(counts)
+
+
+def extract_size_ranges(text: str) -> list[str]:
+    return unique_preserve_order(
+        [
+            re.sub(r"\s+", " ", match.group(0)).replace("inch", "in").strip()
+            for match in re.finditer(
+                r"\b\d+(?:\.\d+)?\s*(?:-|to)\s*\d+(?:\.\d+)?\s*(?:in|inch)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        ]
+    )
+
+
+def extract_keyword_labels(text: str, keyword_map: dict[str, str]) -> list[str]:
+    normalized = label_key(text)
+    labels = []
+    for keyword, label in keyword_map.items():
+        if label_key(keyword) and label_key(keyword) in normalized:
+            labels.append(label)
+    return unique_preserve_order(labels)
+
+
+def dynamic_feature_labels(ideation: dict[str, Any]) -> list[str]:
+    """Use the category feature-signal database to add SKU-defining Section F labels."""
+    profile = select_feature_signal_profile(ideation)
+    if not profile:
+        return []
+
+    source = {
+        "identity": ideation["identity"],
+        "electrical": ideation["electrical_specs"],
+        "physical": ideation["physical_mechanical"],
+        "features": ideation["features_requirements"],
+        "business": ideation["business_targets"],
+        "research": ideation["research_guidance"],
+    }
+    labels: list[str] = list(profile.get("static_features") or [])
+    extractor_maps = {
+        "style_keywords": profile.get("style_keywords") or {},
+        "finish_keywords": profile.get("finish_keywords") or {},
+        "material_keywords": profile.get("material_keywords") or {},
+        "mounting_keywords": profile.get("mounting_keywords") or {},
+    }
+
+    for field in profile.get("feature_fields") or []:
+        text = normalize_text(nested_value(source, field.get("path") or "")) or ""
+        if not text:
+            continue
+        for extractor in field.get("extractors") or []:
+            if extractor == "light_count":
+                labels.extend(extract_light_counts(text))
+            elif extractor == "size_range":
+                labels.extend(extract_size_ranges(text))
+            elif extractor == "socket":
+                labels.extend(clean_feature_labels(text))
+            elif extractor in extractor_maps:
+                labels.extend(extract_keyword_labels(text, extractor_maps[extractor]))
+
+    max_features = int(parse_number(profile.get("max_features")) or 12)
+    return unique_preserve_order(labels)[:max_features]
+
+
 def build_feature_watchlist(ideation: dict[str, Any]) -> list[str]:
     """Build a feature list that must be validated in competitive research."""
     electrical = ideation["electrical_specs"]
@@ -434,6 +589,7 @@ def build_feature_watchlist(ideation: dict[str, Any]) -> list[str]:
     cleaned: list[str] = []
     for value in raw_features:
         cleaned.extend(clean_feature_labels(value))
+    cleaned.extend(dynamic_feature_labels(ideation))
     return unique_preserve_order(cleaned)
 
 

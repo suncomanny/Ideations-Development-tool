@@ -581,7 +581,7 @@ def write_claude_collection_prompt(session_root: Path, status_result: dict[str, 
                 "packet_file": str(packet_path),
                 "output_file": str(session_root / str(task.get("output_file"))),
                 "must_validate": {
-                    "features": ((plan.get("must_validate") or {}).get("features") or [])[:6],
+                    "features": ((plan.get("must_validate") or {}).get("features") or [])[:12],
                     "certifications": ((plan.get("must_validate") or {}).get("certifications") or [])[:4],
                 },
                 "target_price_band": plan.get("target_price_band"),

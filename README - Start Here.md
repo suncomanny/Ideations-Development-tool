@@ -22,6 +22,8 @@ Step 2 and Step 3 use a clean handoff contract. Step 2 creates one row per candi
 
 Step 2 can still carry notes and validation guidance, but Step 3 only scores concise customer-facing feature and certification signals. Non-applicable values, `TBD`, `N/A`, optional bulb guidance, and supplier-validation prose are ignored or converted into cleaner checks such as `E12 socket`, `E26 socket`, `ETL`, and `UL`.
 
+Section F is driven by a backend category feature-signal database at `backend/app/prd_research_tool/config/category_feature_signal_profiles.json`. For decorative chandelier rows, Step 3 now adds SKU-defining signals such as light count, size range, style/form factor, finish/color, material, mounting, and socket type before it scores competitor coverage.
+
 Step 3 has two phases:
 
 1. Choose `Prepare new research session from latest Step 2 workbook`.

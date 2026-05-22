@@ -874,6 +874,51 @@ def feature_match_detail(item: dict[str, Any], label: str) -> dict[str, Any]:
     def heuristic() -> dict[str, Any]:
         return {"matched": True, "basis": "heuristic"}
 
+    light_count_match = re.fullmatch(r"(\d+)\s*light", lowered)
+    if light_count_match:
+        count = light_count_match.group(1)
+        if re.search(rf"\b{re.escape(count)}\s*light\b", haystack):
+            return explicit()
+        return {"matched": False}
+
+    size_range_match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(?:-|to|\s+)\s*(\d+(?:\.\d+)?)\s*in", lowered)
+    if size_range_match:
+        low = float(size_range_match.group(1))
+        high = float(size_range_match.group(2))
+        observed = [
+            float(match.group(1))
+            for match in re.finditer(r"\b(\d+(?:\.\d+)?)\s*(?:in|inch|wide|w)\b", haystack)
+        ]
+        if any((low - 1) <= value <= (high + 1) for value in observed):
+            return explicit()
+        return {"matched": False}
+
+    if lowered in {"black", "matte black", "gold", "brass", "rattan", "woven", "pendant", "chandelier"}:
+        if all(token in haystack for token in lowered.split()):
+            return explicit()
+        return {"matched": False}
+    if lowered in {"wood look", "wood look accent"}:
+        if "wood" in haystack or "wood look" in haystack:
+            return explicit()
+        return {"matched": False}
+    if lowered in {"natural rattan", "rattan shade"}:
+        if "rattan" in haystack:
+            return explicit()
+        return {"matched": False}
+    if lowered == "woven shade":
+        if "woven" in haystack:
+            return explicit()
+        return {"matched": False}
+    if lowered in {"wagon wheel", "linear island", "kitchen island"}:
+        if all(token in haystack for token in lowered.split()):
+            return explicit()
+        return {"matched": False}
+    if lowered in {"chain hung", "rod hung", "ceiling mount", "metal frame"}:
+        required = lowered.replace("hung", "").replace("mount", "").strip()
+        if any(token in haystack for token in required.split()):
+            return heuristic()
+        return {"matched": False}
+
     if "0-10v" in lowered:
         if "0 10v" in title or "0 10v" in features or dimming_type == "0 10v":
             return explicit()

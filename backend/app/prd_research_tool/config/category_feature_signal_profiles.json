@@ -1,0 +1,111 @@
+{
+  "version": "2026-05-22",
+  "description": "Category-specific SKU feature signals used to populate Section F from structured Step 2 attributes.",
+  "profiles": [
+    {
+      "id": "decorative_chandelier",
+      "label": "Decorative chandelier SKU signals",
+      "category_matches": ["Chandeliers"],
+      "subcategory_matches": ["Chandeliers"],
+      "match_keywords": [
+        "chandelier",
+        "wagon wheel",
+        "linear island",
+        "pendant",
+        "rattan",
+        "woven"
+      ],
+      "static_features": ["dimmable"],
+      "feature_fields": [
+        {
+          "path": "physical.size_form_factor",
+          "extractors": ["light_count", "size_range", "style_keywords"]
+        },
+        {
+          "path": "physical.finish_color",
+          "extractors": ["finish_keywords"]
+        },
+        {
+          "path": "physical.material",
+          "extractors": ["material_keywords"]
+        },
+        {
+          "path": "physical.mounting_type",
+          "extractors": ["mounting_keywords"]
+        },
+        {
+          "path": "features.bulb_base_type",
+          "extractors": ["socket"]
+        },
+        {
+          "path": "identity.ideation_name",
+          "extractors": ["light_count", "size_range", "style_keywords", "finish_keywords", "material_keywords"]
+        }
+      ],
+      "style_keywords": {
+        "wagon wheel": "wagon wheel",
+        "linear island": "linear island",
+        "kitchen island": "kitchen island",
+        "rattan": "rattan",
+        "woven": "woven",
+        "pendant": "pendant",
+        "chandelier": "chandelier"
+      },
+      "finish_keywords": {
+        "matte black": "matte black",
+        "black": "black",
+        "gold": "gold",
+        "brass": "brass",
+        "wood-look": "wood-look",
+        "wood": "wood-look",
+        "natural rattan": "natural rattan",
+        "rattan": "rattan",
+        "woven": "woven"
+      },
+      "material_keywords": {
+        "metal": "metal frame",
+        "wood-look": "wood-look accent",
+        "wood": "wood-look accent",
+        "rattan": "rattan shade",
+        "woven": "woven shade"
+      },
+      "mounting_keywords": {
+        "chain": "chain-hung",
+        "rod": "rod-hung",
+        "ceiling": "ceiling mount"
+      },
+      "max_features": 12
+    },
+    {
+      "id": "generic_lighting",
+      "label": "Generic lighting SKU signals",
+      "match_keywords": [],
+      "static_features": ["dimmable"],
+      "feature_fields": [
+        {
+          "path": "physical.size_form_factor",
+          "extractors": ["light_count", "size_range", "style_keywords"]
+        },
+        {
+          "path": "physical.finish_color",
+          "extractors": ["finish_keywords"]
+        },
+        {
+          "path": "features.bulb_base_type",
+          "extractors": ["socket"]
+        }
+      ],
+      "style_keywords": {},
+      "finish_keywords": {
+        "black": "black",
+        "white": "white",
+        "bronze": "bronze",
+        "gold": "gold",
+        "brass": "brass"
+      },
+      "material_keywords": {},
+      "mounting_keywords": {},
+      "max_features": 8
+    }
+  ]
+}
