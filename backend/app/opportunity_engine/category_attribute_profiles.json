@@ -50,5 +50,41 @@
       "target_msrp": "TBD from competitor median by size/bulb count",
       "target_vendor_cost": "TBD after target MSRP and margin gate"
     }
+  },
+  "under_cabinet": {
+    "notes": "Defaults used for under-cabinet task-lighting concepts when Step 1 evidence does not provide a stronger SKU-specific value.",
+    "defaults": {
+      "subcategory": "Under cabinet",
+      "voltage": "Battery rechargeable or 120V plug-in/hardwire by kit type",
+      "selectable_wattage": "No",
+      "selectable_cct": "Yes",
+      "cri": "80+ target",
+      "dimmable": "Yes",
+      "dimming_type": "Touch/remote dimming for puck kits; inline/controller dimming for tape kits",
+      "frequency": "60Hz where line voltage applies",
+      "driver_type": "Rechargeable battery pack or listed low-voltage driver by kit type",
+      "ip_rating": null,
+      "moisture_rating": "Dry/damp indoor cabinet use; validate exact listing claim",
+      "indoor_outdoor_use": "Indoor",
+      "wiring_type": "Rechargeable magnetic mount, plug-in, or hardwired by SKU",
+      "emergency_battery": "No",
+      "motion_sensor": "Yes for rechargeable puck/bar variants",
+      "motion_duration": "TBD by supplier; target selectable auto-off",
+      "daylight_sensor_auto_dimming": "Optional; validate demand before adding complexity",
+      "smart_connected": "Optional for RGB/tape variants only",
+      "linkable": "Yes for bar/tape variants; not required for puck kits",
+      "bulb_base_type": null,
+      "bulb_shape": null,
+      "beam_angle": "Wide task-light distribution; exact optics TBD",
+      "target_msrp": "TBD from competitor median by pack count and kit type",
+      "target_margin_shopify": "60% target",
+      "target_margin_amazon": "70% target",
+      "cost_type": "Landed",
+      "certifications": "ETL, UL, FCC where controls/batteries apply",
+      "lifetime_hours": "25,000+ hour target for integrated LEDs",
+      "warranty": "3 year target; validate battery warranty separately",
+      "priority_channels": "Amazon, Sunco.com, Home Depot Marketplace",
+      "stackline_data": "Yes"
+    }
   }
 }

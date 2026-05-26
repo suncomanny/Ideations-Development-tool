@@ -11,6 +11,7 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.worksheet.views import Pane, Selection
 
 from .categories import Category
+from .category_intelligence import format_intelligence_audit, load_category_intelligence
 from .paths import ProjectPaths
 from .sql_audit import collect_sql_text
 from .url_validation import extract_urls, format_validation_notes, validate_urls
@@ -101,7 +102,7 @@ def _load_attribute_profiles() -> dict[str, Any]:
     return json.loads(profile_path.read_text(encoding="utf-8"))
 
 
-def _merged_attribute_profile(category: Category) -> dict[str, Any]:
+def _merged_attribute_profile(category: Category, intelligence_defaults: dict[str, Any] | None = None) -> dict[str, Any]:
     profiles = _load_attribute_profiles()
     selected = profiles.get(category.slug) or {}
     inherited_key = selected.get("inherits")
@@ -112,6 +113,7 @@ def _merged_attribute_profile(category: Category) -> dict[str, Any]:
     merged.update({key: value for key, value in selected.items() if key != "defaults"})
     defaults = dict(merged.get("defaults") or {})
     defaults.update(selected.get("defaults") or {})
+    defaults.update({key: value for key, value in (intelligence_defaults or {}).items() if value not in (None, "", [], {})})
     merged["defaults"] = defaults
     return merged
 
@@ -314,6 +316,14 @@ def _extract_light_count_values(text: str) -> list[str]:
             if value not in values:
                 values.append(value)
     for value in re.findall(r"\b(\d+)\s*-?\s*light\b", text, flags=re.IGNORECASE):
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _extract_pack_count_values(text: str) -> list[str]:
+    values: list[str] = []
+    for value in re.findall(r"\b(\d+)\s*[-/]?\s*(?:pack|pk|count)\b", text, flags=re.IGNORECASE):
         if value not in values:
             values.append(value)
     return values
@@ -544,7 +554,26 @@ def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[
     text = _evidence_text(item)
     base_name = str(item.get("name") or "").strip()
     light_counts = _extract_light_count_values(text)
+    pack_counts = _extract_pack_count_values(text)
     sizes = _extract_sizes(text)
+    if category.slug == "under_cabinet" and pack_counts:
+        candidates: list[dict[str, Any]] = []
+        for pack_count in pack_counts[:4]:
+            candidate = deepcopy(item)
+            label = f"{pack_count}-pack"
+            candidate["name"] = _candidate_name(base_name, label)
+            candidate["_parent_opportunity"] = base_name
+            candidate["_target_pack_count"] = pack_count
+            candidate["_sku_candidate_rationale"] = (
+                "Split from the parent opportunity because Step 1 evidence or PM action named this as a "
+                "distinct kit pack-count option. Step 3 should research this row as one candidate SKU."
+            )
+            candidate["_field_overrides"] = {
+                "size_form_factor": f"{pack_count}-pack under-cabinet kit",
+                "research_notes": f"Pack-count target: {pack_count}-pack; validate battery capacity, mounting accessories, and Amazon pack economics.",
+            }
+            candidates.append(candidate)
+        return candidates
     if category.slug != "chandeliers" and len(light_counts) <= 1 and len(sizes) <= 1:
         return [item]
     if not light_counts and len(sizes) <= 1:
@@ -601,6 +630,7 @@ def _build_research_notes(
         f"Classification: {item.get('classification')}",
         f"Parent opportunity: {item.get('_parent_opportunity')}" if item.get("_parent_opportunity") else None,
         f"SKU candidate target: {item.get('_target_light_count')}-light; size target {item.get('_target_size')}" if item.get("_target_light_count") else None,
+        f"SKU candidate target: {item.get('_target_pack_count')}-pack kit" if item.get("_target_pack_count") else None,
         f"SKU candidate rationale: {item.get('_sku_candidate_rationale')}" if item.get("_sku_candidate_rationale") else None,
         f"Evidence: {item.get('why')}",
         f"Sunco check: {item.get('sunco_check')}",
@@ -608,7 +638,7 @@ def _build_research_notes(
         f"Review link: {item.get('url')}",
         f"Link validation: {link_validation}" if link_validation else None,
         "Attribute enrichment: fields were filled from Step 1 evidence first, then category-profile defaults when safe.",
-        "Confidence note: chandelier wattage, lumens, CCT, CRI, and lifetime are bulb-dependent unless Sunco chooses an integrated LED design or bundled bulbs.",
+        "Confidence note: validate final electrical specs, certifications, packaging, and claims against supplier files before PRD lock.",
     ]
     if profile.get("notes"):
         notes.append(f"Profile note: {profile.get('notes')}")
@@ -676,6 +706,24 @@ def _enrich_item(
     enriched["efficiency"] = "Bulb-dependent"
     enriched["power_factor"] = "N/A for replaceable bulbs; validate if integrated LED"
     enriched["operating_temperature"] = "Residential indoor ambient; supplier rating TBD"
+    if category.slug == "under_cabinet":
+        lowered = text.lower()
+        if "magnetic" in lowered or "rechargeable" in lowered or "puck" in lowered:
+            enriched["mounting_type"] = "Magnetic and adhesive under-cabinet mount target"
+            enriched["wiring_type"] = "Rechargeable battery / no-wire installation"
+            enriched["motion_sensor"] = "Yes for rechargeable puck/bar variants"
+        elif "tape" in lowered or "strip" in lowered:
+            enriched["mounting_type"] = "Adhesive tape/channel under-cabinet mount target"
+            enriched["wiring_type"] = "Plug-in or hardwired low-voltage driver options"
+            enriched["motion_sensor"] = "No unless selected as a motion-kit variant"
+            enriched["linkable"] = "Yes; extension/corner accessories expected"
+        enriched["size_form_factor"] = str(enriched.get("size_form_factor") or "").replace("Ceiling / chain-hanging or rod-hung", "under-cabinet kit")
+        if item.get("_target_pack_count"):
+            enriched["size_form_factor"] = f"{item.get('_target_pack_count')}-pack under-cabinet kit"
+        enriched["wattage_primary"] = "Integrated LED; wattage by puck/bar/tape length and pack count"
+        enriched["lumens_target"] = "Task-light output by kit type; validate per-light and total kit lumens"
+        enriched["bulb_base_type"] = None
+        enriched["bulb_shape"] = None
     if pricing:
         enriched["target_msrp"] = pricing["text"]
         enriched["target_vendor_cost"] = pricing["vendor_cost_text"]
@@ -694,8 +742,9 @@ def _fill_ideation_row(
     item: dict[str, Any],
     market_samples: list[dict[str, Any]],
     url_validation_cache: dict[str, dict[str, Any]],
+    intelligence_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    profile = _merged_attribute_profile(category)
+    profile = _merged_attribute_profile(category, intelligence_defaults)
     enriched = _enrich_item(category, item, profile, market_samples, url_validation_cache)
     values = {
         COLUMN_MAP[key]: value
@@ -711,6 +760,7 @@ def _fill_ideation_row(
 
 def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_workbook: Path | None = None) -> tuple[Path, list[str]]:
     paths.ensure()
+    intelligence = load_category_intelligence(paths, category)
     selected_gap = gap_workbook or latest_gap_workbook(paths, category)
     if selected_gap is None:
         raise FileNotFoundError(f"No Step 1 gap workbook found for {category.run_name}. Run Step 1 first.")
@@ -733,7 +783,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
     url_validation_cache: dict[str, dict[str, Any]] = {}
     enriched_rows: list[dict[str, Any]] = []
     for offset, item in enumerate(candidate_rows[:100], start=4):
-        enriched_rows.append(_fill_ideation_row(ws, offset, category, item, market_samples, url_validation_cache))
+        enriched_rows.append(_fill_ideation_row(ws, offset, category, item, market_samples, url_validation_cache, intelligence.attribute_defaults))
 
     if "Source Mapping" in workbook.sheetnames:
         mapping = workbook["Source Mapping"]
@@ -782,6 +832,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             ("URL validation rule", "Step 2 checks Step 1 review URLs live when the workbook is generated. 2xx/3xx means verified; 403/429 means blocked by retailer/CDN and needs manual browser review; 404/410 means invalid and should be replaced."),
             ("URL validation summary", _url_validation_summary(url_validation_cache)),
             ("Market price sample file", str(market_sample_path) if market_sample_path else "No category market price sample file found."),
+            ("Category intelligence audit", format_intelligence_audit(intelligence)),
         ],
         collect_sql_text(paths, category.slug),
     )

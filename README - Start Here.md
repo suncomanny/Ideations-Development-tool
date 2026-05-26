@@ -24,6 +24,14 @@ Step 2 can still carry notes and validation guidance, but Step 3 only scores con
 
 Section F is driven by a backend category feature-signal database at `backend/app/prd_research_tool/config/category_feature_signal_profiles.json`. For decorative chandelier rows, Step 3 now adds SKU-defining signals such as light count, size range, style/form factor, finish/color, material, mounting, and socket type before it scores competitor coverage.
 
+The 1/2/3 workflow also preloads a local category intelligence SQLite database at `backend/source_data/category_intelligence/sunco_category_intelligence.sqlite`. This file is backend source/cache data and is intentionally not tracked by git. Rebuild it with:
+
+```text
+python -m backend.app.opportunity_engine.build_category_intelligence --root "."
+```
+
+The tracked schema and builder live in `backend/app/opportunity_engine`. The builder seeds categories, local gap evidence, available Stackline/cache inventory, category attribute defaults, and Section F feature-signal profiles. If a private Shopify/catalog export is available, place it under `backend/source_data/postgres_exports` as ignored source data before rebuilding.
+
 Step 3 has two phases:
 
 1. Choose `Prepare new research session from latest Step 2 workbook`.

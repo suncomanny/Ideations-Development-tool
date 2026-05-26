@@ -3,6 +3,79 @@
   "description": "Category-specific SKU feature signals used to populate Section F from structured Step 2 attributes.",
   "profiles": [
     {
+      "id": "under_cabinet_task_lighting",
+      "label": "Under-cabinet task lighting SKU signals",
+      "category_matches": ["Under cabinet"],
+      "subcategory_matches": ["Under cabinet"],
+      "match_keywords": [
+        "under cabinet",
+        "under-cabinet",
+        "puck",
+        "cabinet",
+        "rechargeable",
+        "motion",
+        "tape",
+        "strip",
+        "remote",
+        "magnetic"
+      ],
+      "static_features": ["dimmable"],
+      "feature_fields": [
+        {
+          "path": "identity.ideation_name",
+          "extractors": ["style_keywords", "pack_count", "length", "color_mode_keywords"]
+        },
+        {
+          "path": "physical.size_form_factor",
+          "extractors": ["style_keywords", "pack_count", "length", "color_mode_keywords"]
+        },
+        {
+          "path": "physical.mounting_type",
+          "extractors": ["mounting_keywords"]
+        },
+        {
+          "path": "electrical.cct_primary",
+          "extractors": ["color_mode_keywords"]
+        },
+        {
+          "path": "physical.wiring_type",
+          "extractors": ["power_keywords"]
+        }
+      ],
+      "style_keywords": {
+        "puck": "puck light",
+        "bar": "light bar",
+        "tape": "tape light",
+        "strip": "strip light",
+        "kit": "kit format"
+      },
+      "mounting_keywords": {
+        "magnetic": "magnetic mount",
+        "adhesive": "adhesive mount",
+        "hardwired": "hardwired",
+        "plug": "plug-in",
+        "surface": "surface mount"
+      },
+      "power_keywords": {
+        "rechargeable": "rechargeable battery",
+        "battery": "battery powered",
+        "plug": "plug-in",
+        "hardwired": "hardwired",
+        "low-voltage": "low-voltage driver"
+      },
+      "color_mode_keywords": {
+        "3000": "3000K",
+        "4000": "4000K",
+        "5000": "5000K",
+        "selectable": "selectable CCT",
+        "tunable": "tunable white",
+        "rgb": "RGB"
+      },
+      "finish_keywords": {},
+      "material_keywords": {},
+      "max_features": 12
+    },
+    {
       "id": "decorative_chandelier",
       "label": "Decorative chandelier SKU signals",
       "category_matches": ["Chandeliers"],

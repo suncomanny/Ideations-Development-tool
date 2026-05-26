@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from .categories import Category
+from .category_intelligence import format_intelligence_audit, load_category_intelligence
 from .paths import ProjectPaths
 from .sql_audit import collect_sql_text
 from .utils import slugify, timestamp
@@ -340,6 +341,7 @@ def _reference_manifest_paths(paths: ProjectPaths) -> tuple[Path, Path, Path]:
 
 
 def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any]:
+    intelligence = load_category_intelligence(paths, category)
     source_path, amazon_rerun_path, amazon_path = _reference_manifest_paths(paths)
     source_payload = load_json(source_path) if source_path.exists() else {"recommendations": []}
     amazon_rerun_payload = load_json(amazon_rerun_path) if amazon_rerun_path.exists() else {"recommendations": []}
@@ -362,6 +364,15 @@ def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any
             row for row in amazon_payload.get("recommendations", [])
             if _match_category(category, row.get("subcategory"))
         ]
+
+    if not exact_source_rows or not exact_amazon_rows:
+        for evidence in intelligence.gap_evidence:
+            row = _gap_evidence_to_step1_row(evidence, category)
+            channel = str(evidence.get("source_channel") or "").lower()
+            if "amazon" in channel and not exact_amazon_rows:
+                exact_amazon_rows.append(row)
+            elif "amazon" not in channel and not exact_source_rows:
+                exact_source_rows.append(row)
 
     source_rows, source_warnings = _backfill_rows(
         category=category,
@@ -393,6 +404,28 @@ def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any
         "amazon_supplemental_count": max(0, len(amazon_rows) - len(exact_amazon_rows)),
         "amazon_supplemental_warnings": amazon_warnings,
         "supplemental_warnings": _unique_warnings(source_warnings + amazon_warnings),
+        "category_intelligence": intelligence,
+    }
+
+
+def _gap_evidence_to_step1_row(evidence: dict[str, Any], category: Category) -> dict[str, Any]:
+    recommendation = evidence.get("recommendation")
+    return {
+        "subcategory": category.run_name,
+        "recommendation": recommendation,
+        "classification": evidence.get("classification"),
+        "priority": evidence.get("priority") or "Medium",
+        "confidence": evidence.get("confidence") or "Medium",
+        "example": evidence.get("competitor_example"),
+        "source_url": evidence.get("review_url"),
+        "review_url": evidence.get("review_url"),
+        "sunco_check": evidence.get("sunco_coverage_check"),
+        "why_gap": evidence.get("gap_rationale"),
+        "evidence": evidence.get("gap_rationale"),
+        "pm_action": evidence.get("pm_action"),
+        "action": evidence.get("pm_action"),
+        "source_systems": evidence.get("source_systems") or ["category_intelligence_db"],
+        "local_image": evidence.get("local_image"),
     }
 
 
@@ -449,6 +482,7 @@ def _write_summary(workbook, category: Category, data: dict[str, Any]) -> None:
         ("Why these ideations were selected", SUCCESS_PROXY_TEXT),
         ("Decision tree", _decision_tree_text()),
         ("Supplemental candidate rule", f"Use the natural exact-category result count plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} warning-labeled adjacent candidate per recommendation tab."),
+        ("Category intelligence database", format_intelligence_audit(data["category_intelligence"])),
     ]
     for index, (label, value) in enumerate(rows, start=3):
         ws.cell(index, 1).value = label
@@ -521,6 +555,7 @@ def _write_amazon_rows(paths: ProjectPaths, workbook, rows: list[dict[str, Any]]
 
 
 def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> None:
+    intelligence = data["category_intelligence"]
     ws = workbook["Sources and Audit"]
     rows = [
         ("Decision tree", category.run_name, "Selection logic", _decision_tree_text(), ""),
@@ -529,6 +564,7 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
         ("Cache", "All", "Corrected Amazon rerun evidence", data["amazon_rerun_path"], data["amazon_rerun_path"]),
         ("Cache", "All", "Amazon manifest", data["amazon_path"], data["amazon_path"]),
         ("Freshness", "All", "Generated date", str(data.get("generated") or "Unknown"), ""),
+        ("Category intelligence", category.run_name, "Backend SQLite database", format_intelligence_audit(intelligence), str(intelligence.database_path)),
     ]
     for row in rows:
         ws.append(row)
@@ -550,6 +586,13 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
         "Competitive recommendation ranking and image selection.",
         "Rows are only present where cached or refreshed evidence exists.",
         data["amazon_rerun_path"],
+    ])
+    aws.append([
+        "Category intelligence",
+        format_intelligence_audit(intelligence),
+        "Backend demand, coverage, and feature-signal context used before Step 1 selection.",
+        "Private source rows are only represented by counts and audit notes in user-facing workbooks.",
+        str(intelligence.database_path),
     ])
     aws.append([
         "Decision tree",
@@ -634,6 +677,7 @@ def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh
             ("Image status", "\n".join(image_status) if image_status else "No images embedded for this category run."),
             ("Supplemental candidate rule", f"Use natural exact-category results plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} adjacent supplemental candidate per tab. Supplemental rows are adjacent seeds, not exact category proof."),
             ("Supplemental warnings", "\n".join(data.get("supplemental_warnings", [])) or "No supplemental rows were needed."),
+            ("Category intelligence audit", format_intelligence_audit(data["category_intelligence"])),
         ],
         collect_sql_text(paths, category.slug),
     )

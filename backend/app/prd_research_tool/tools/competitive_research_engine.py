@@ -500,6 +500,24 @@ def extract_size_ranges(text: str) -> list[str]:
     )
 
 
+def extract_pack_counts(text: str) -> list[str]:
+    return unique_preserve_order(
+        [
+            f"{match.group(1)}-pack"
+            for match in re.finditer(r"\b(\d+)\s*[-/]?\s*(?:pack|pk|count)\b", text, flags=re.IGNORECASE)
+        ]
+    )
+
+
+def extract_lengths(text: str) -> list[str]:
+    return unique_preserve_order(
+        [
+            re.sub(r"\s+", " ", match.group(0)).replace("feet", "ft").replace("inch", "in").strip()
+            for match in re.finditer(r"\b\d+(?:\.\d+)?\s*(?:ft|feet|in|inch)\b", text, flags=re.IGNORECASE)
+        ]
+    )
+
+
 def extract_keyword_labels(text: str, keyword_map: dict[str, str]) -> list[str]:
     normalized = label_key(text)
     labels = []
@@ -529,6 +547,8 @@ def dynamic_feature_labels(ideation: dict[str, Any]) -> list[str]:
         "finish_keywords": profile.get("finish_keywords") or {},
         "material_keywords": profile.get("material_keywords") or {},
         "mounting_keywords": profile.get("mounting_keywords") or {},
+        "power_keywords": profile.get("power_keywords") or {},
+        "color_mode_keywords": profile.get("color_mode_keywords") or {},
     }
 
     for field in profile.get("feature_fields") or []:
@@ -542,6 +562,10 @@ def dynamic_feature_labels(ideation: dict[str, Any]) -> list[str]:
                 labels.extend(extract_size_ranges(text))
             elif extractor == "socket":
                 labels.extend(clean_feature_labels(text))
+            elif extractor == "pack_count":
+                labels.extend(extract_pack_counts(text))
+            elif extractor == "length":
+                labels.extend(extract_lengths(text))
             elif extractor in extractor_maps:
                 labels.extend(extract_keyword_labels(text, extractor_maps[extractor]))
 
@@ -734,7 +758,7 @@ def build_stackline_amazon_seeds(ideation: dict[str, Any]) -> list[dict[str, Any
                     "sku": sku,
                     "model_number": product.get("model_number"),
                     "title": product.get("title"),
-                    "url": f"https://www.amazon.com/dp/{sku}" if sku else None,
+                    "url": product.get("url") or (f"https://www.amazon.com/dp/{sku}" if sku else None),
                     "avg_retail_price": product.get("avg_retail_price"),
                     "units_sold": product.get("units_sold"),
                     "sales_share_pct": product.get("sales_share_pct"),
@@ -763,7 +787,7 @@ def build_stackline_home_depot_seeds(ideation: dict[str, Any]) -> list[dict[str,
                     "sku": sku,
                     "model_number": product.get("model_number"),
                     "title": product.get("title"),
-                    "url": f"https://www.homedepot.com/p/{sku}" if sku else None,
+                    "url": product.get("url") or (f"https://www.homedepot.com/p/{sku}" if sku else None),
                     "avg_retail_price": product.get("avg_retail_price"),
                     "units_sold": product.get("units_sold"),
                     "sales_share_pct": product.get("sales_share_pct"),
