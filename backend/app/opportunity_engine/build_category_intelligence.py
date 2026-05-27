@@ -15,13 +15,43 @@ from .utils import slugify
 
 
 ALIASES = {
+    "ufo": ["high bay", "ufo high bay", "warehouse light"],
+    "linears": ["linear", "linear fixture", "shop light", "strip light"],
+    "slims": ["slim", "slim light", "canless slim"],
+    "retros": ["retrofit", "retrofit kit", "downlight retrofit"],
+    "cans": ["recessed can", "can light", "downlight can"],
+    "rough_ins": ["rough in", "rough-in", "junction box"],
     "under_cabinet": ["Under cabinet / tape", "under-cabinet", "under counter", "Under Cabinet Light Fixture"],
     "tape_rope_light": ["Under cabinet / tape", "tape light", "rope light", "LED Neon Rope"],
-    "wall_sconces": ["Wall sconces"],
-    "ceiling_fixtures": ["Ceiling fixtures", "Ceiling panels / fixtures", "Residential decor fixtures"],
-    "panels": ["Ceiling panels", "Ceiling Panel Lights"],
-    "emergency": ["Emergency Lights", "Emergency Signs"],
+    "wall_sconces": ["Wall sconces", "sconce", "wall sconce"],
+    "ceiling_fixtures": ["Ceiling fixtures", "Ceiling panels / fixtures", "Residential decor fixtures", "fixture", "flush mount", "ceiling light"],
+    "panels": ["Ceiling panels", "Ceiling Panel Lights", "panel lights", "panel light"],
+    "emergency": ["Emergency Lights", "Emergency Signs", "exit signs", "exit sign"],
+    "striplights": ["striplight", "strip light", "strip lights"],
+    "vaportights": ["vapor tight", "vaportight", "vapor tights"],
     "wraparounds": ["Wraparound", "Wraparound / utility ceiling", "Wraparound / residential utility"],
+    "wall_packs": ["wall pack", "wall packs"],
+    "flood_lights": ["flood light", "flood lights"],
+    "commercial_landscape": ["landscape light", "commercial landscape"],
+    "outdoor_security": ["security light", "outdoor security"],
+    "area_lights": ["area light", "area lights", "shoebox"],
+    "canopy": ["canopy light", "canopy"],
+    "string_lights": ["string light", "string lights"],
+    "outdoor_ceiling": ["outdoor ceiling"],
+    "wire": ["wire", "cable"],
+    "low_voltage_transformers": ["transformer", "low voltage transformer"],
+    "wire_connectors": ["wire connector", "cable connector", "connector"],
+    "sensors": ["sensor", "occupancy sensor", "pir sensor"],
+    "dimmers": ["dimmer", "light switch", "switches", "light switches"],
+    "bathroom_fans": ["bathroom fan", "exhaust fan"],
+    "bulbs_plus_tubes": ["bulb", "bulbs", "led bulbs", "tube", "tubes", "t8", "lamp", "lamps"],
+    "pendants": ["pendant", "pendant light"],
+    "vanity": ["vanity", "vanity light"],
+    "commercial_grow_lights": ["commercial grow light", "grow lights", "grow light"],
+    "residential_grow_lights": ["residential grow light"],
+    "commercial_security": ["commercial security"],
+    "residential_security": ["residential security"],
+    "residential_landscape": ["path lights", "path light", "spotlight", "well light", "landscape"],
 }
 
 ATTRIBUTE_HINTS = {
@@ -122,6 +152,14 @@ def resolve_category(lookup: dict[str, dict[str, Any]], value: str | None) -> di
     for key, row in lookup.items():
         if key and key in slugify(raw):
             return row
+    return None
+
+
+def resolve_category_from_values(lookup: dict[str, dict[str, Any]], *values: Any) -> dict[str, Any] | None:
+    for value in values:
+        category = resolve_category(lookup, str(value) if value is not None else None)
+        if category:
+            return category
     return None
 
 
@@ -390,7 +428,15 @@ def insert_private_catalog_exports(
         for item in rows:
             if not isinstance(item, dict):
                 continue
-            category = resolve_category(lookup, item.get("category") or item.get("category_mapping") or item.get("product_type") or item.get("title"))
+            category = resolve_category_from_values(
+                lookup,
+                item.get("category"),
+                item.get("category_mapping"),
+                item.get("product_type"),
+                item.get("title"),
+                item.get("product_title"),
+                item.get("name"),
+            )
             if not category:
                 warnings.append(f"Could not map catalog export row SKU '{item.get('sku') or item.get('master_sku')}' from {path.name}")
                 continue
@@ -439,6 +485,188 @@ def insert_private_catalog_exports(
                     )
                     spec_count += 1
     return product_count, spec_count, warnings
+
+
+def iter_clean_catalog_product_rows(paths: ProjectPaths) -> list[dict[str, str]]:
+    folder = paths.source_data / "catalog_specs"
+    path = folder / "sunco_catalog_products_clean.csv"
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def iter_clean_catalog_attribute_rows(paths: ProjectPaths) -> list[dict[str, str]]:
+    folder = paths.source_data / "catalog_specs"
+    path = folder / "sunco_catalog_spec_attributes_long.csv"
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def insert_clean_catalog_specs(
+    connection: sqlite3.Connection,
+    paths: ProjectPaths,
+    lookup: dict[str, dict[str, Any]],
+    category_ids: dict[str, int],
+) -> tuple[int, int, list[str]]:
+    """Import the normalized backend catalog/spec reference CSVs."""
+    product_rows = iter_clean_catalog_product_rows(paths)
+    attribute_rows = iter_clean_catalog_attribute_rows(paths)
+    if not product_rows and not attribute_rows:
+        return 0, 0, []
+
+    now = utc_now()
+    warnings: list[str] = []
+    product_count = 0
+    spec_count = 0
+    category_by_key: dict[str, dict[str, Any]] = {}
+    category_by_sku: dict[str, dict[str, Any]] = {}
+
+    for item in product_rows:
+        catalog_key = item.get("catalog_key") or item.get("sku") or item.get("source_handle") or item.get("title")
+        category = resolve_category_from_values(
+            lookup,
+            item.get("category_mapping"),
+            item.get("product_type"),
+            item.get("title"),
+            item.get("raw_info"),
+            item.get("source_handle"),
+        )
+        if not category:
+            warnings.append(f"Could not map clean catalog row '{catalog_key}' to a system category.")
+            continue
+        category_id = category_ids[category["slug"]]
+        sku = item.get("sku") or None
+        connection.execute(
+            """
+            INSERT INTO shopify_category_products(
+                category_id, sku, product_title, product_type, tags_json, shopify_url,
+                image_url, active_status, category_mapping, source, source_reference, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                category_id,
+                sku,
+                item.get("title") or item.get("raw_info") or sku or "Unnamed catalog product",
+                item.get("product_type"),
+                json_text([]),
+                item.get("shopify_url"),
+                item.get("image_url"),
+                item.get("active_status") or "catalog_reference",
+                item.get("category_mapping") or item.get("product_type"),
+                "clean_catalog_specs_reference",
+                "backend/source_data/catalog_specs/sunco_catalog_products_clean.csv",
+                now,
+            ),
+        )
+        product_count += 1
+        if catalog_key:
+            category_by_key[str(catalog_key)] = category
+        if sku:
+            category_by_sku[str(sku)] = category
+
+    for item in attribute_rows:
+        sku = item.get("sku") or None
+        category = None
+        if sku:
+            category = category_by_sku.get(str(sku))
+        if not category and item.get("catalog_key"):
+            category = category_by_key.get(str(item.get("catalog_key")))
+        if not category:
+            category = resolve_category_from_values(
+                lookup,
+                item.get("category_mapping"),
+                item.get("product_type"),
+                item.get("title"),
+            )
+        if not category:
+            warnings.append(f"Could not map clean catalog spec row '{item.get('catalog_key') or sku}' to a system category.")
+            continue
+        attribute = (item.get("attribute_name") or "").strip()
+        value = (item.get("attribute_value") or "").strip()
+        if not attribute or not value:
+            continue
+        connection.execute(
+            """
+            INSERT INTO shopify_spec_attributes(
+                category_id, sku, attribute_name, attribute_value, source, source_reference, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                category_ids[category["slug"]],
+                sku,
+                attribute,
+                value,
+                "clean_catalog_specs_reference",
+                "backend/source_data/catalog_specs/sunco_catalog_spec_attributes_long.csv",
+                now,
+            ),
+        )
+        spec_count += 1
+
+    return product_count, spec_count, warnings
+
+
+def insert_catalog_attribute_distribution(connection: sqlite3.Connection) -> int:
+    """Roll SKU/spec rows into category-level attribute distributions."""
+    now = utc_now()
+    product_counts = {
+        int(row[0]): int(row[1])
+        for row in connection.execute(
+            """
+            SELECT category_id, COUNT(*)
+            FROM shopify_category_products
+            GROUP BY category_id
+            """
+        )
+    }
+    inserted = 0
+    rows = connection.execute(
+        """
+        SELECT category_id, attribute_name, attribute_value, COUNT(*) AS occurrence_count
+        FROM shopify_spec_attributes
+        GROUP BY category_id, attribute_name, attribute_value
+        """
+    ).fetchall()
+    for category_id, attribute, value, occurrence_count in rows:
+        total = product_counts.get(int(category_id), 0)
+        if total <= 0:
+            continue
+        coverage = round((int(occurrence_count) / total) * 100, 2)
+        if coverage >= 60:
+            signal = "table_stakes"
+        elif coverage >= 25:
+            signal = "common"
+        elif coverage >= 5:
+            signal = "emerging"
+        else:
+            signal = "rare"
+        connection.execute(
+            """
+            INSERT INTO category_attribute_distribution(
+                category_id, attribute_name, attribute_value, occurrence_count, product_count,
+                coverage_pct, signal_class, source, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(category_id),
+                str(attribute),
+                str(value),
+                int(occurrence_count),
+                total,
+                coverage,
+                signal,
+                "clean_catalog_specs_reference",
+                now,
+            ),
+        )
+        inserted += 1
+    return inserted
 
 
 def infer_channel_from_path(path: Path) -> str:
@@ -567,6 +795,11 @@ def build_category_intelligence_database(paths: ProjectPaths, output_path: Path 
         counts["shopify_catalog_products"] = product_count
         counts["shopify_catalog_spec_attributes"] = spec_count
         warnings.extend(catalog_warnings)
+        clean_product_count, clean_spec_count, clean_catalog_warnings = insert_clean_catalog_specs(connection, paths, lookup, category_ids)
+        counts["clean_catalog_products"] = clean_product_count
+        counts["clean_catalog_spec_attributes"] = clean_spec_count
+        warnings.extend(clean_catalog_warnings[:100])
+        counts["catalog_attribute_distribution"] = insert_catalog_attribute_distribution(connection)
         counts["attribute_profile_defaults"] = insert_attribute_profiles(connection, paths, lookup, category_ids)
         counts["feature_profiles"] = insert_feature_profiles(connection, paths, lookup, category_ids)
         stackline_count, stackline_warnings = insert_stackline_file_inventory(connection, paths, lookup, category_ids)
@@ -574,7 +807,7 @@ def build_category_intelligence_database(paths: ProjectPaths, output_path: Path 
         warnings.extend(stackline_warnings)
         counts["stackline_segments_from_redshift_cache_inventory"] = insert_redshift_cache_inventory(connection, paths, lookup, category_ids)
 
-        if not product_count and not any((paths.source_data / folder).exists() for folder in ["shopify", "catalog", "postgres_exports"]):
+        if not (product_count or clean_product_count) and not any((paths.source_data / folder).exists() for folder in ["shopify", "catalog", "postgres_exports", "catalog_specs"]):
             warnings.append("No local Shopify/catalog product export folder was found; shopify_category_products remains empty until a private export is supplied.")
         connection.execute(
             """

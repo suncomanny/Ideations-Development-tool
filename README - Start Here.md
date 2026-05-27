@@ -32,6 +32,15 @@ python -m backend.app.opportunity_engine.build_category_intelligence --root "."
 
 The tracked schema and builder live in `backend/app/opportunity_engine`. The builder seeds categories, local gap evidence, available Stackline/cache inventory, category attribute defaults, and Section F feature-signal profiles. If a private Shopify/catalog export is available, place it under `backend/source_data/postgres_exports` as ignored source data before rebuilding.
 
+To create the clean backend catalog/spec reference from the current Sunco specs CSV, run:
+
+```text
+python -m backend.app.opportunity_engine.clean_catalog_specs_reference --root "."
+python -m backend.app.opportunity_engine.build_category_intelligence --root "."
+```
+
+The cleaner writes ignored backend files under `backend/source_data/catalog_specs`: one product reference CSV, one long-format SKU/spec attribute CSV, and a manifest. Those files can be regenerated from a newer Redshift/Postgres export later without changing the 1/2/3 workflow.
+
 Step 3 has two phases:
 
 1. Choose `Prepare new research session from latest Step 2 workbook`.
