@@ -20,6 +20,7 @@ class CategoryIntelligence:
     summary: dict[str, Any]
     attribute_defaults: dict[str, Any]
     feature_signals: list[str]
+    sku_decoder_codes: list[dict[str, Any]]
     gap_evidence: list[dict[str, Any]]
     audit: list[dict[str, Any]]
 
@@ -78,7 +79,7 @@ def load_category_intelligence(paths: ProjectPaths, category: Category) -> Categ
             (category.slug,),
         ).fetchone()
         if not category_row:
-            return CategoryIntelligence(category, database_path(paths), {}, {}, [], [], [])
+            return CategoryIntelligence(category, database_path(paths), {}, {}, [], [], [], [])
 
         category_id = int(category_row["category_id"])
         distributions = _rows(
@@ -119,6 +120,18 @@ def load_category_intelligence(paths: ProjectPaths, category: Category) -> Categ
                 (category_id,),
             )
         )
+        decoder_codes = _rows(
+            connection.execute(
+                """
+                SELECT code_category, normalized_code_category, code, match_prefix,
+                       code_meaning, mapped_attribute, line_review_match, source_reference
+                FROM sku_decoder_codes
+                WHERE category_id = ?
+                ORDER BY line_review_match DESC, normalized_code_category, code
+                """,
+                (category_id,),
+            )
+        )
         audit = _rows(
             connection.execute(
                 """
@@ -153,6 +166,7 @@ def load_category_intelligence(paths: ProjectPaths, category: Category) -> Categ
         summary=dict(summary_row) if summary_row else {},
         attribute_defaults=defaults,
         feature_signals=feature_signals,
+        sku_decoder_codes=decoder_codes,
         gap_evidence=evidence,
         audit=audit,
     )
@@ -163,15 +177,28 @@ def format_intelligence_audit(intelligence: CategoryIntelligence) -> str:
     parts = [
         f"Category intelligence DB: {intelligence.database_path}",
         f"Shopify/catalog products: {summary.get('shopify_product_count', 0)}",
+        f"SKU decoder codes: {summary.get('sku_decoder_code_count', 0)}",
         f"Stackline segments: {summary.get('stackline_segment_count', 0)}",
         f"Stackline top products: {summary.get('stackline_top_product_count', 0)}",
         f"Gap evidence rows: {summary.get('gap_evidence_count', 0)}",
     ]
+    match_codes = [
+        str(row.get("code"))
+        for row in intelligence.sku_decoder_codes
+        if row.get("line_review_match") and row.get("code")
+    ]
+    if match_codes:
+        parts.append("Line-review SKU prefixes: " + ", ".join(match_codes[:12]))
     if intelligence.feature_signals:
         parts.append("Feature signals: " + ", ".join(intelligence.feature_signals[:12]))
     warnings = []
     for audit in intelligence.audit:
         warnings.extend(audit.get("warnings") or [])
     if warnings:
-        parts.append("Refresh warnings: " + " | ".join(dict.fromkeys(warnings)))
+        unique_warnings = list(dict.fromkeys(warnings))
+        shown = unique_warnings[:8]
+        warning_text = " | ".join(shown)
+        if len(unique_warnings) > len(shown):
+            warning_text += f" | ... {len(unique_warnings) - len(shown)} more warning(s)"
+        parts.append("Refresh warnings: " + warning_text)
     return "\n".join(parts)

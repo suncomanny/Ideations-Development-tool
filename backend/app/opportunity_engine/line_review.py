@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 from dataclasses import dataclass
@@ -97,6 +98,29 @@ def _category_terms(category: Category) -> list[str]:
         if clean and clean not in terms:
             terms.append(clean)
     return sorted(terms, key=lambda item: (len(item), item))
+
+
+def _decoder_prefixes(paths: ProjectPaths, category: Category) -> list[str]:
+    path = paths.source_data / "sku_decoder" / "sku_decoder_clean.csv"
+    if not path.exists():
+        return []
+    prefixes: list[str] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if (row.get("mapped_category_slug") or "").strip() != category.slug:
+                continue
+            if str(row.get("line_review_match") or "").strip().lower() not in {"1", "true", "yes"}:
+                continue
+            prefix = (row.get("match_prefix") or "").strip().upper()
+            if prefix and prefix not in prefixes:
+                prefixes.append(prefix)
+    return sorted(prefixes, key=lambda item: (len(item), item))
+
+
+def _values_cte(values: list[str]) -> str:
+    if not values:
+        return "SELECT NULL::text WHERE FALSE"
+    return "VALUES\n        " + ",\n        ".join(f"({_sql_literal(value)})" for value in values)
 
 
 def _snapshot_candidates(paths: ProjectPaths, category: Category) -> list[Path]:
@@ -257,11 +281,15 @@ def load_line_review_rows(paths: ProjectPaths, category: Category) -> tuple[list
     return rows, source_references, source_notes, rejected_sources
 
 
-def build_line_review_sql(category: Category) -> str:
+def build_line_review_sql(category: Category, paths: ProjectPaths | None = None) -> str:
     values = ",\n        ".join(f"({_sql_literal(term)})" for term in _category_terms(category))
+    decoder_prefixes = _decoder_prefixes(paths, category) if paths else []
+    decoder_values = _values_cte(decoder_prefixes)
+    decoder_note = ", ".join(decoder_prefixes) if decoder_prefixes else "none available"
     return f"""-- Existing SKU Line Review for {category.run_name}
 -- Source policy: Postgres only. Do not supplement this query with legacy local CSV/workbook exports.
 -- Window: trailing 365 days from CURRENT_DATE. Channels: Shopify=12585, Amazon US=11929.
+-- SKU decoder product-type prefixes used for category matching: {decoder_note}
 WITH params AS (
     SELECT
         CURRENT_DATE - INTERVAL '365 days' AS start_date,
@@ -271,61 +299,82 @@ category_terms(term) AS (
     VALUES
         {values}
 ),
+decoder_prefixes(match_prefix) AS (
+    {decoder_values}
+),
+variant_by_product AS (
+    SELECT DISTINCT ON (product_id) *
+    FROM shopify_productvariantatshopify
+    WHERE product_id IS NOT NULL
+    ORDER BY product_id, id
+),
+variant_by_sku AS (
+    SELECT DISTINCT ON (UPPER(sku)) *
+    FROM shopify_productvariantatshopify
+    WHERE sku IS NOT NULL AND sku <> ''
+    ORDER BY UPPER(sku), id
+),
 product_base AS (
     SELECT DISTINCT
         p.id AS product_id,
-        UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(sv.sku, ''))) AS sku,
-        regexp_replace(UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(sv.sku, ''))), '-[0-9]+PK$', '', 'i') AS family_part_number,
+        UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, ''))) AS sku,
+        regexp_replace(UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, ''))), '-[0-9]+PK$', '', 'i') AS family_part_number,
         COALESCE(NULLIF(shp.title, ''), NULLIF(p.name, ''), p.master_sku) AS product_title,
         p.status AS product_status,
         NULLIF(p.vendor_cost, 0) AS product_vendor_cost,
         p.vendor_cost_currency,
-        COALESCE((substring(UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(sv.sku, ''))) from '-([0-9]+)PK$'))::int, NULLIF(p.pack_size, 0), 1) AS pack_size,
+        COALESCE((substring(UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, ''))) from '-([0-9]+)PK$'))::int, NULLIF(p.pack_size, 0), 1) AS pack_size,
         pc.name AS product_category_name,
         shp.vendor AS shopify_vendor,
         shp.status AS shopify_status,
         shp.product_type AS shopify_product_type,
-        sv.sku AS shopify_variant_sku,
-        sv.price AS shopify_price,
+        COALESCE(svp.sku, svs.sku) AS shopify_variant_sku,
+        COALESCE(svp.price, svs.price) AS shopify_price,
         CASE
             WHEN shp.response_json ? 'handle' THEN 'https://www.sunco.com/products/' || (shp.response_json ->> 'handle')
-            ELSE 'https://www.sunco.com/search?q=' || regexp_replace(COALESCE(NULLIF(sv.sku, ''), NULLIF(p.master_sku, '')), '[^A-Za-z0-9_-]+', '+', 'g')
+            ELSE 'https://www.sunco.com/search?q=' || regexp_replace(COALESCE(NULLIF(COALESCE(svp.sku, svs.sku), ''), NULLIF(p.master_sku, '')), '[^A-Za-z0-9_-]+', '+', 'g')
         END AS product_url,
         COALESCE(sm.original_source, product_media.original_source) AS image_url,
         p.created::date AS product_created_date
     FROM products_product p
     LEFT JOIN products_category pc ON pc.id = p.category_id
-    LEFT JOIN LATERAL (
-        SELECT matched_sv.*
-        FROM (
-            SELECT sv_by_product.*, 0 AS match_rank
-            FROM shopify_productvariantatshopify sv_by_product
-            WHERE sv_by_product.product_id = p.id
-            UNION ALL
-            SELECT sv_by_sku.*, 1 AS match_rank
-            FROM shopify_productvariantatshopify sv_by_sku
-            WHERE UPPER(sv_by_sku.sku) = UPPER(p.master_sku)
-        ) matched_sv
-        ORDER BY matched_sv.match_rank, matched_sv.id
-        LIMIT 1
-    ) sv ON TRUE
-    LEFT JOIN shopify_shopifyproduct shp ON shp.id = sv.shopify_product_id
-    LEFT JOIN shopify_shopifymedia sm ON sm.id = sv.shopify_media_id
+    LEFT JOIN variant_by_product svp ON svp.product_id = p.id
+    LEFT JOIN variant_by_sku svs ON svp.id IS NULL AND UPPER(svs.sku) = UPPER(p.master_sku)
+    LEFT JOIN shopify_shopifyproduct shp ON shp.id = COALESCE(svp.shopify_product_id, svs.shopify_product_id)
+    LEFT JOIN shopify_shopifymedia sm ON sm.id = COALESCE(svp.shopify_media_id, svs.shopify_media_id)
     LEFT JOIN shopify_shopifymedia product_media
         ON product_media.product_id = shp.id
         AND product_media.position = 1
-    WHERE COALESCE(p.master_sku, sv.sku) IS NOT NULL
-      AND EXISTS (
-          SELECT 1
-          FROM category_terms t
-          WHERE lower(
-              COALESCE(pc.name, '') || ' ' ||
-              COALESCE(pc.sku, '') || ' ' ||
-              COALESCE(shp.product_type, '') || ' ' ||
-              COALESCE(shp.title, '') || ' ' ||
-              COALESCE(p.name, '') || ' ' ||
-              COALESCE(p.master_sku, '')
-          ) LIKE '%' || t.term || '%'
+    WHERE COALESCE(p.master_sku, svp.sku, svs.sku) IS NOT NULL
+      AND (
+          EXISTS (
+              SELECT 1
+              FROM category_terms t
+              WHERE lower(
+                  COALESCE(pc.name, '') || ' ' ||
+                  COALESCE(pc.sku, '') || ' ' ||
+                  COALESCE(shp.product_type, '') || ' ' ||
+                  COALESCE(shp.title, '') || ' ' ||
+                  COALESCE(p.name, '') || ' ' ||
+                  COALESCE(p.master_sku, '')
+              ) LIKE '%' || t.term || '%'
+          )
+          OR EXISTS (
+              SELECT 1
+              FROM decoder_prefixes d
+              WHERE d.match_prefix IS NOT NULL
+                AND left(
+                    UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, ''))),
+                    length(d.match_prefix)
+                ) = d.match_prefix
+                AND (
+                    length(UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, '')))) = length(d.match_prefix)
+                    OR substring(
+                        UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, '')))
+                        from length(d.match_prefix) + 1 for 1
+                    ) IN ('-', '_')
+                )
+          )
       )
 ),
 product_families AS (
@@ -407,7 +456,7 @@ ORDER BY COALESCE(s.total_revenue, 0) DESC, fr.family_part_number;"""
 
 
 def write_line_review_sql(paths: ProjectPaths, category: Category) -> tuple[Path, str]:
-    sql_text = build_line_review_sql(category)
+    sql_text = build_line_review_sql(category, paths)
     sql_folder = paths.cache / "ideation_data" / category.slug / "sql"
     sql_folder.mkdir(parents=True, exist_ok=True)
     sql_path = sql_folder / LINE_REVIEW_SQL_FILENAME

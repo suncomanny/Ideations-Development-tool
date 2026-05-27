@@ -177,19 +177,23 @@ def extract_attribute_values(text: str) -> dict[str, list[str]]:
 
 
 def reset_database(connection: sqlite3.Connection, schema_path: Path) -> None:
-    connection.executescript(schema_path.read_text(encoding="utf-8"))
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("DROP VIEW IF EXISTS category_intelligence_summary")
     for table in [
         "refresh_audit",
         "gap_evidence",
         "category_feature_signal_profile",
         "stackline_top_products",
         "stackline_segments",
+        "sku_decoder_codes",
         "category_attribute_distribution",
         "shopify_spec_attributes",
         "shopify_category_products",
         "categories",
     ]:
-        connection.execute(f"DELETE FROM {table}")
+        connection.execute(f"DROP TABLE IF EXISTS {table}")
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.executescript(schema_path.read_text(encoding="utf-8"))
     connection.commit()
 
 
@@ -398,6 +402,48 @@ def insert_feature_profiles(
                     json_text(category_matches),
                     json_text(flatten_profile_signals(profile)),
                     "category_feature_signal_profiles.json",
+                    str(path),
+                    now,
+                ),
+            )
+            count += 1
+    return count
+
+
+def insert_sku_decoder_codes(
+    connection: sqlite3.Connection,
+    paths: ProjectPaths,
+    category_ids: dict[str, int],
+) -> int:
+    path = paths.source_data / "sku_decoder" / "sku_decoder_clean.csv"
+    if not path.exists():
+        return 0
+    now = utc_now()
+    count = 0
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            mapped_slug = (row.get("mapped_category_slug") or "").strip()
+            category_id = category_ids.get(mapped_slug) if mapped_slug else None
+            connection.execute(
+                """
+                INSERT INTO sku_decoder_codes(
+                    category_id, code_category, normalized_code_category, code, match_prefix,
+                    code_meaning, mapped_category_slug, mapped_attribute, line_review_match,
+                    source, source_reference, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    category_id,
+                    row.get("code_category") or "",
+                    row.get("normalized_code_category") or "",
+                    row.get("code") or "",
+                    row.get("match_prefix") or "",
+                    row.get("code_meaning") or "",
+                    mapped_slug,
+                    row.get("mapped_attribute") or "",
+                    1 if str(row.get("line_review_match") or "").strip().lower() in {"1", "true", "yes"} else 0,
+                    "sku_decoder_clean.csv",
                     str(path),
                     now,
                 ),
@@ -802,6 +848,7 @@ def build_category_intelligence_database(paths: ProjectPaths, output_path: Path 
         counts["catalog_attribute_distribution"] = insert_catalog_attribute_distribution(connection)
         counts["attribute_profile_defaults"] = insert_attribute_profiles(connection, paths, lookup, category_ids)
         counts["feature_profiles"] = insert_feature_profiles(connection, paths, lookup, category_ids)
+        counts["sku_decoder_codes"] = insert_sku_decoder_codes(connection, paths, category_ids)
         stackline_count, stackline_warnings = insert_stackline_file_inventory(connection, paths, lookup, category_ids)
         counts["stackline_segments_from_csv_inventory"] = stackline_count
         warnings.extend(stackline_warnings)

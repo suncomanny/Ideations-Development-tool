@@ -101,6 +101,22 @@ CREATE TABLE IF NOT EXISTS category_feature_signal_profile (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sku_decoder_codes (
+    decoder_id INTEGER PRIMARY KEY,
+    category_id INTEGER REFERENCES categories(category_id) ON DELETE SET NULL,
+    code_category TEXT NOT NULL,
+    normalized_code_category TEXT NOT NULL,
+    code TEXT NOT NULL,
+    match_prefix TEXT,
+    code_meaning TEXT NOT NULL,
+    mapped_category_slug TEXT,
+    mapped_attribute TEXT,
+    line_review_match INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL,
+    source_reference TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS gap_evidence (
     evidence_id INTEGER PRIMARY KEY,
     category_id INTEGER NOT NULL REFERENCES categories(category_id) ON DELETE CASCADE,
@@ -137,6 +153,8 @@ CREATE INDEX IF NOT EXISTS idx_specs_category_attr ON shopify_spec_attributes(ca
 CREATE INDEX IF NOT EXISTS idx_distribution_category_attr ON category_attribute_distribution(category_id, attribute_name);
 CREATE INDEX IF NOT EXISTS idx_stackline_segments_category ON stackline_segments(category_id, channel);
 CREATE INDEX IF NOT EXISTS idx_stackline_top_products_category ON stackline_top_products(category_id, channel);
+CREATE INDEX IF NOT EXISTS idx_sku_decoder_category ON sku_decoder_codes(category_id, normalized_code_category);
+CREATE INDEX IF NOT EXISTS idx_sku_decoder_match ON sku_decoder_codes(line_review_match, match_prefix);
 CREATE INDEX IF NOT EXISTS idx_gap_evidence_category_channel ON gap_evidence(category_id, source_channel);
 
 CREATE VIEW IF NOT EXISTS category_intelligence_summary AS
@@ -145,11 +163,13 @@ SELECT
     c.owner,
     c.run_name AS category,
     COUNT(DISTINCT p.product_id) AS shopify_product_count,
+    COUNT(DISTINCT d.decoder_id) AS sku_decoder_code_count,
     COUNT(DISTINCT s.segment_id) AS stackline_segment_count,
     COUNT(DISTINCT t.top_product_id) AS stackline_top_product_count,
     COUNT(DISTINCT g.evidence_id) AS gap_evidence_count
 FROM categories c
 LEFT JOIN shopify_category_products p ON p.category_id = c.category_id
+LEFT JOIN sku_decoder_codes d ON d.category_id = c.category_id
 LEFT JOIN stackline_segments s ON s.category_id = c.category_id
 LEFT JOIN stackline_top_products t ON t.category_id = c.category_id
 LEFT JOIN gap_evidence g ON g.category_id = c.category_id

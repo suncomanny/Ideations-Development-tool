@@ -64,6 +64,15 @@ python -m backend.app.opportunity_engine.build_category_intelligence --root "."
 
 The cleaner writes ignored backend files under `backend/source_data/catalog_specs`: one product reference CSV, one long-format SKU/spec attribute CSV, and a manifest. Those files can be regenerated from a newer Redshift/Postgres export later without changing the 1/2/3 workflow.
 
+To create the clean backend SKU decoder reference from the current Manny SKU Decoder CSV, run:
+
+```text
+python -m backend.app.opportunity_engine.clean_sku_decoder_reference --root "."
+python -m backend.app.opportunity_engine.build_category_intelligence --root "."
+```
+
+The SKU decoder cleaner writes ignored backend files under `backend/source_data/sku_decoder`. The decoder is used as category-matching support, not as the source of truth for product data. Postgres/Redshift still supply the actual line-review rows; the decoder helps the generated line-review SQL recognize SKU prefixes such as `VL` for Vanity, `WS` for Wall Sconce, `PN24` for Panels, and `VT` for Vapor Tight.
+
 Step 3 has two phases:
 
 1. Choose `Prepare new research session from latest Step 2 workbook`.
