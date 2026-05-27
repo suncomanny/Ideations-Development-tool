@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
@@ -105,6 +106,29 @@ SUCCESS_PROXY_TEXT = (
     "assortment gap, and a concrete PM action path. Ideas with weaker category fit are labeled as supplemental and "
     "must not be treated as proven true gaps until refreshed evidence supports them."
 )
+
+
+@contextmanager
+def _category_run_lock(paths: ProjectPaths, category: Category):
+    lock_dir = paths.cache / "run_locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"step1_{category.slug}.lock"
+    try:
+        handle = lock_path.open("x", encoding="utf-8")
+    except FileExistsError as exc:
+        raise RuntimeError(
+            f"Step 1 is already running for {category.run_name}. "
+            "Wait for the existing run to finish before starting another one."
+        ) from exc
+    try:
+        handle.write(timestamp())
+        handle.close()
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _match_category(category: Category, raw: str | None) -> bool:
@@ -647,62 +671,63 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
 
 def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh: bool = False) -> tuple[Path, list[str]]:
     paths.ensure()
-    data = load_category_data(paths, category)
-    line_review_context = prepare_line_review_context(paths, category)
-    data["line_review_context"] = line_review_context
-    template = _template_path(paths)
-    output_folder = paths.gap_category_outputs(category.slug)
-    output_folder.mkdir(parents=True, exist_ok=True)
-    output = output_folder / f"{category.slug}_true_gaps_{timestamp()}.xlsx"
-    ensure_template_copy(template, output)
+    with _category_run_lock(paths, category):
+        data = load_category_data(paths, category)
+        line_review_context = prepare_line_review_context(paths, category)
+        data["line_review_context"] = line_review_context
+        template = _template_path(paths)
+        output_folder = paths.gap_category_outputs(category.slug)
+        output_folder.mkdir(parents=True, exist_ok=True)
+        output = output_folder / f"{category.slug}_true_gaps_{timestamp()}.xlsx"
+        ensure_template_copy(template, output)
 
-    workbook = load_workbook(output)
-    _clear_true_gap_workbook(workbook)
-    image_status = []
-    _write_summary(workbook, category, data)
-    image_status.extend(_write_source_rows(paths, workbook, data["source_rows"]))
-    image_status.extend(_write_amazon_rows(paths, workbook, data["amazon_rows"]))
-    _write_source_audit(workbook, category, data)
-    write_line_review_sheet(workbook, line_review_context)
+        workbook = load_workbook(output)
+        _clear_true_gap_workbook(workbook)
+        image_status = []
+        _write_summary(workbook, category, data)
+        image_status.extend(_write_source_rows(paths, workbook, data["source_rows"]))
+        image_status.extend(_write_amazon_rows(paths, workbook, data["amazon_rows"]))
+        _write_source_audit(workbook, category, data)
+        write_line_review_sheet(workbook, line_review_context)
 
-    freshness = "Unknown"
-    if data["age_days"] is not None:
-        freshness = f"{data['age_days']} days old"
-    refresh_note = "Force refresh requested." if force_refresh else "Force refresh not requested."
-    if data["age_days"] is None or data["age_days"] > 30 or force_refresh:
-        refresh_note += " Fresh collection should run before final decisions if live collectors are configured."
-    if not data["source_rows"] and not data["amazon_rows"]:
-        refresh_note += " No cached rows were available for this category, so this workbook is an audit-ready empty run shell."
+        freshness = "Unknown"
+        if data["age_days"] is not None:
+            freshness = f"{data['age_days']} days old"
+        refresh_note = "Force refresh requested." if force_refresh else "Force refresh not requested."
+        if data["age_days"] is None or data["age_days"] > 30 or force_refresh:
+            refresh_note += " Fresh collection should run before final decisions if live collectors are configured."
+        if not data["source_rows"] and not data["amazon_rows"]:
+            refresh_note += " No cached rows were available for this category, so this workbook is an audit-ready empty run shell."
 
-    audit_rows = [
-        ("Project", "sunco-product-opportunity-engine"),
-        ("Category", category.run_name),
-        ("Owner", category.owner),
-        ("Generated", timestamp()),
-        ("Data freshness", freshness),
-        ("Refresh note", refresh_note),
-        ("Primary competitor channel", "Amazon"),
-        ("Secondary competitor channel", "Home Depot Marketplace"),
-        ("Ideation decision tree", _decision_tree_text()),
-        ("Why selected over other ideas", SUCCESS_PROXY_TEXT),
-        ("Ranking rule", "Exact selected-category rows are selected first. Rows with High priority and High confidence outrank weaker rows. If exact-category coverage is sparse, the tool may include one clearly warning-labeled adjacent candidate per tab for exploration."),
-        ("Promotion rule", "A supplemental row is not considered a true gap until live evidence confirms category fit, demand, Sunco coverage gap, and PM actionability."),
-        ("Image status", "\n".join(image_status) if image_status else "No images embedded for this category run."),
-        ("Supplemental candidate rule", f"Use natural exact-category results plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} adjacent supplemental candidate per tab. Supplemental rows are adjacent seeds, not exact category proof."),
-        ("Supplemental warnings", "\n".join(data.get("supplemental_warnings", [])) or "No supplemental rows were needed."),
-        ("Category intelligence audit", format_intelligence_audit(data["category_intelligence"])),
-    ]
-    audit_rows.extend(line_review_run_audit_rows(line_review_context))
-    add_or_replace_audit_sheet(
-        workbook,
-        audit_rows,
-        collect_sql_text(paths, category.slug),
-    )
-    workbook.save(output)
-    workbook.close()
+        audit_rows = [
+            ("Project", "sunco-product-opportunity-engine"),
+            ("Category", category.run_name),
+            ("Owner", category.owner),
+            ("Generated", timestamp()),
+            ("Data freshness", freshness),
+            ("Refresh note", refresh_note),
+            ("Primary competitor channel", "Amazon"),
+            ("Secondary competitor channel", "Home Depot Marketplace"),
+            ("Ideation decision tree", _decision_tree_text()),
+            ("Why selected over other ideas", SUCCESS_PROXY_TEXT),
+            ("Ranking rule", "Exact selected-category rows are selected first. Rows with High priority and High confidence outrank weaker rows. If exact-category coverage is sparse, the tool may include one clearly warning-labeled adjacent candidate per tab for exploration."),
+            ("Promotion rule", "A supplemental row is not considered a true gap until live evidence confirms category fit, demand, Sunco coverage gap, and PM actionability."),
+            ("Image status", "\n".join(image_status) if image_status else "No images embedded for this category run."),
+            ("Supplemental candidate rule", f"Use natural exact-category results plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} adjacent supplemental candidate per tab. Supplemental rows are adjacent seeds, not exact category proof."),
+            ("Supplemental warnings", "\n".join(data.get("supplemental_warnings", [])) or "No supplemental rows were needed."),
+            ("Category intelligence audit", format_intelligence_audit(data["category_intelligence"])),
+        ]
+        audit_rows.extend(line_review_run_audit_rows(line_review_context))
+        add_or_replace_audit_sheet(
+            workbook,
+            audit_rows,
+            collect_sql_text(paths, category.slug),
+        )
+        workbook.save(output)
+        workbook.close()
 
-    issues = validate_workbook(output, ["Summary", "Recommendations", "Sources and Audit", "Amazon Recommendations", "Amazon Source Audit", "Run Audit"])
-    ok, message = try_excel_com_open_save(output)
-    if message:
-        issues.append(message if not ok else message)
-    return output, issues
+        issues = validate_workbook(output, ["Summary", "Recommendations", "Sources and Audit", "Amazon Recommendations", "Amazon Source Audit", "Run Audit"])
+        ok, message = try_excel_com_open_save(output)
+        if message:
+            issues.append(message if not ok else message)
+        return output, issues
