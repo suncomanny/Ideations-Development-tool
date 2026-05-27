@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import datetime as datetime_module
 import json
 import platform
 import queue
@@ -9,6 +10,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +132,14 @@ class McpRemoteClient:
             return []
         if text.strip().lower().startswith("error:"):
             raise RuntimeError(text)
-        parsed = ast.literal_eval(text)
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            parsed = eval(  # noqa: S307 - MCP returns Python reprs for Decimal/date values.
+                text,
+                {"__builtins__": {}},
+                {"Decimal": Decimal, "datetime": datetime_module},
+            )
         if not isinstance(parsed, list):
             raise RuntimeError(f"Unexpected SQL result shape: {type(parsed).__name__}")
         return [row for row in parsed if isinstance(row, dict)]
