@@ -4,6 +4,7 @@ User-facing folder name: **Ideation Development**
 
 Run the scripts in order:
 
+0. `0 - Refresh Backend Data.py` when backend data is missing or older than 30 days
 1. `1 - Category Ideation Generator.py`
 2. `2 - Ideation Template Generator.py`
 3. `3 - Ideation Research Tool.py`
@@ -112,7 +113,15 @@ This produces a research workbook from local/Stackline evidence only. The tool w
 
 ## Data Freshness
 
-Cached category data is reusable for 30 days. If data is older than 30 days, the script explains that a refresh is needed and creates a new timestamped run output. Users can also force refresh from the terminal prompt.
+Cached category data is reusable for 30 days. A refresh means pulling the latest approved Postgres/Redshift evidence into backend snapshot files so the user-facing workbook can run from a stable local copy instead of querying databases every time. If data is older than 30 days, Step 1 explains that a refresh is needed and creates a new timestamped run output. Users can also force refresh from the terminal prompt.
+
+`0 - Refresh Backend Data.py` refreshes approved Postgres line-review snapshots under:
+
+```text
+backend/source_data/postgres_exports/line_reviews
+```
+
+These JSON snapshots are backend data and are intentionally ignored by git. They are the files Step 1 uses to populate `Existing SKU Line Review`.
 
 ## Credentials
 
