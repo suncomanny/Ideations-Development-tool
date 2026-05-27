@@ -119,7 +119,7 @@ def _snapshot_candidates(paths: ProjectPaths, category: Category) -> list[Path]:
 
 
 def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def _payload_rows(payload: Any) -> list[dict[str, Any]]:
@@ -272,7 +272,7 @@ category_terms(term) AS (
         {values}
 ),
 product_base AS (
-    SELECT
+    SELECT DISTINCT
         p.id AS product_id,
         UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(sv.sku, ''))) AS sku,
         regexp_replace(UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(sv.sku, ''))), '-[0-9]+PK$', '', 'i') AS family_part_number,
@@ -289,15 +289,31 @@ product_base AS (
         sv.price AS shopify_price,
         CASE
             WHEN shp.response_json ? 'handle' THEN 'https://www.sunco.com/products/' || (shp.response_json ->> 'handle')
-            ELSE NULL
+            ELSE 'https://www.sunco.com/search?q=' || regexp_replace(COALESCE(NULLIF(sv.sku, ''), NULLIF(p.master_sku, '')), '[^A-Za-z0-9_-]+', '+', 'g')
         END AS product_url,
-        sm.original_source AS image_url,
+        COALESCE(sm.original_source, product_media.original_source) AS image_url,
         p.created::date AS product_created_date
     FROM products_product p
     LEFT JOIN products_category pc ON pc.id = p.category_id
-    LEFT JOIN shopify_productvariantatshopify sv ON sv.product_id = p.id
+    LEFT JOIN LATERAL (
+        SELECT matched_sv.*
+        FROM (
+            SELECT sv_by_product.*, 0 AS match_rank
+            FROM shopify_productvariantatshopify sv_by_product
+            WHERE sv_by_product.product_id = p.id
+            UNION ALL
+            SELECT sv_by_sku.*, 1 AS match_rank
+            FROM shopify_productvariantatshopify sv_by_sku
+            WHERE UPPER(sv_by_sku.sku) = UPPER(p.master_sku)
+        ) matched_sv
+        ORDER BY matched_sv.match_rank, matched_sv.id
+        LIMIT 1
+    ) sv ON TRUE
     LEFT JOIN shopify_shopifyproduct shp ON shp.id = sv.shopify_product_id
     LEFT JOIN shopify_shopifymedia sm ON sm.id = sv.shopify_media_id
+    LEFT JOIN shopify_shopifymedia product_media
+        ON product_media.product_id = shp.id
+        AND product_media.position = 1
     WHERE COALESCE(p.master_sku, sv.sku) IS NOT NULL
       AND EXISTS (
           SELECT 1
