@@ -18,6 +18,29 @@ Step 1 includes its selection rationale in the workbook. Check `Summary`, `Sourc
 
 Use this as the answer when asked: "How did we determine those ideations would be successful over others?" The tool is not claiming guaranteed success; it is ranking higher-probability ideas for research based on competitor demand signals, Sunco coverage gaps, and PM actionability.
 
+Step 1 also adds an `Existing SKU Line Review` sheet after the recommendation/audit sheets. This sheet is additive and does not change the existing Step 1 workbook contract used by Step 2 and Step 3. Line-review evidence is intentionally restricted to approved Postgres/Redshift snapshots; legacy local Line Review CSV/workbook sources are blocked. If no approved snapshot exists for the selected category, the sheet stays in the workbook with a clear source-policy note instead of fabricating rows.
+
+Approved line-review snapshots should be JSON files under:
+
+```text
+backend/source_data/postgres_exports/line_reviews
+backend/source_data/redshift_exports/line_reviews
+```
+
+Use a filename containing the category slug, such as `panels_line_review_2026-05-26.json`. The preferred shape is:
+
+```json
+{
+  "source_system": "postgres",
+  "category_slug": "panels",
+  "generated_at": "2026-05-26T00:00:00Z",
+  "sql": "SELECT ...",
+  "rows": []
+}
+```
+
+Step 1 writes the recommended Postgres query for each category to `backend/cache/ideation_data/<category_slug>/sql/line_review_postgres.sql`, and the SQL is included on `Run Audit`.
+
 Step 2 and Step 3 use a clean handoff contract. Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct options such as bulb count, size, or form factor. It does not force a minimum row count. Step 3 then creates one final research workbook with one sheet per Step 2 row, so SKU-level permutations are researched separately without creating multiple workbooks.
 
 Step 2 can still carry notes and validation guidance, but Step 3 only scores concise customer-facing feature and certification signals. Non-applicable values, `TBD`, `N/A`, optional bulb guidance, and supplier-validation prose are ignored or converted into cleaner checks such as `E12 socket`, `E26 socket`, `ETL`, and `UL`.

@@ -11,6 +11,12 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 from .categories import Category
 from .category_intelligence import format_intelligence_audit, load_category_intelligence
+from .line_review import (
+    prepare_line_review_context,
+    run_audit_rows as line_review_run_audit_rows,
+    source_audit_rows as line_review_source_audit_rows,
+    write_line_review_sheet,
+)
 from .paths import ProjectPaths
 from .sql_audit import collect_sql_text
 from .utils import slugify, timestamp
@@ -484,6 +490,9 @@ def _write_summary(workbook, category: Category, data: dict[str, Any]) -> None:
         ("Supplemental candidate rule", f"Use the natural exact-category result count plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} warning-labeled adjacent candidate per recommendation tab."),
         ("Category intelligence database", format_intelligence_audit(data["category_intelligence"])),
     ]
+    line_review_context = data.get("line_review_context")
+    if line_review_context:
+        rows.append(("Existing SKU line review", line_review_context.summary()))
     for index, (label, value) in enumerate(rows, start=3):
         ws.cell(index, 1).value = label
         ws.cell(index, 2).value = value
@@ -566,6 +575,9 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
         ("Freshness", "All", "Generated date", str(data.get("generated") or "Unknown"), ""),
         ("Category intelligence", category.run_name, "Backend SQLite database", format_intelligence_audit(intelligence), str(intelligence.database_path)),
     ]
+    line_review_context = data.get("line_review_context")
+    if line_review_context:
+        rows.extend(line_review_source_audit_rows(line_review_context))
     for row in rows:
         ws.append(row)
     for row in data.get("source_rows", []):
@@ -636,6 +648,8 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
 def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh: bool = False) -> tuple[Path, list[str]]:
     paths.ensure()
     data = load_category_data(paths, category)
+    line_review_context = prepare_line_review_context(paths, category)
+    data["line_review_context"] = line_review_context
     template = _template_path(paths)
     output_folder = paths.gap_category_outputs(category.slug)
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -649,6 +663,7 @@ def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh
     image_status.extend(_write_source_rows(paths, workbook, data["source_rows"]))
     image_status.extend(_write_amazon_rows(paths, workbook, data["amazon_rows"]))
     _write_source_audit(workbook, category, data)
+    write_line_review_sheet(workbook, line_review_context)
 
     freshness = "Unknown"
     if data["age_days"] is not None:
@@ -659,26 +674,28 @@ def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh
     if not data["source_rows"] and not data["amazon_rows"]:
         refresh_note += " No cached rows were available for this category, so this workbook is an audit-ready empty run shell."
 
+    audit_rows = [
+        ("Project", "sunco-product-opportunity-engine"),
+        ("Category", category.run_name),
+        ("Owner", category.owner),
+        ("Generated", timestamp()),
+        ("Data freshness", freshness),
+        ("Refresh note", refresh_note),
+        ("Primary competitor channel", "Amazon"),
+        ("Secondary competitor channel", "Home Depot Marketplace"),
+        ("Ideation decision tree", _decision_tree_text()),
+        ("Why selected over other ideas", SUCCESS_PROXY_TEXT),
+        ("Ranking rule", "Exact selected-category rows are selected first. Rows with High priority and High confidence outrank weaker rows. If exact-category coverage is sparse, the tool may include one clearly warning-labeled adjacent candidate per tab for exploration."),
+        ("Promotion rule", "A supplemental row is not considered a true gap until live evidence confirms category fit, demand, Sunco coverage gap, and PM actionability."),
+        ("Image status", "\n".join(image_status) if image_status else "No images embedded for this category run."),
+        ("Supplemental candidate rule", f"Use natural exact-category results plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} adjacent supplemental candidate per tab. Supplemental rows are adjacent seeds, not exact category proof."),
+        ("Supplemental warnings", "\n".join(data.get("supplemental_warnings", [])) or "No supplemental rows were needed."),
+        ("Category intelligence audit", format_intelligence_audit(data["category_intelligence"])),
+    ]
+    audit_rows.extend(line_review_run_audit_rows(line_review_context))
     add_or_replace_audit_sheet(
         workbook,
-        [
-            ("Project", "sunco-product-opportunity-engine"),
-            ("Category", category.run_name),
-            ("Owner", category.owner),
-            ("Generated", timestamp()),
-            ("Data freshness", freshness),
-            ("Refresh note", refresh_note),
-            ("Primary competitor channel", "Amazon"),
-            ("Secondary competitor channel", "Home Depot Marketplace"),
-            ("Ideation decision tree", _decision_tree_text()),
-            ("Why selected over other ideas", SUCCESS_PROXY_TEXT),
-            ("Ranking rule", "Exact selected-category rows are selected first. Rows with High priority and High confidence outrank weaker rows. If exact-category coverage is sparse, the tool may include one clearly warning-labeled adjacent candidate per tab for exploration."),
-            ("Promotion rule", "A supplemental row is not considered a true gap until live evidence confirms category fit, demand, Sunco coverage gap, and PM actionability."),
-            ("Image status", "\n".join(image_status) if image_status else "No images embedded for this category run."),
-            ("Supplemental candidate rule", f"Use natural exact-category results plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} adjacent supplemental candidate per tab. Supplemental rows are adjacent seeds, not exact category proof."),
-            ("Supplemental warnings", "\n".join(data.get("supplemental_warnings", [])) or "No supplemental rows were needed."),
-            ("Category intelligence audit", format_intelligence_audit(data["category_intelligence"])),
-        ],
+        audit_rows,
         collect_sql_text(paths, category.slug),
     )
     workbook.save(output)
