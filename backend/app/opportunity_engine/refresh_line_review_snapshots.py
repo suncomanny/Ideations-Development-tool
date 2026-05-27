@@ -213,8 +213,34 @@ def refresh_line_review_snapshots(
                 print(f"  wrote {len(rows)} row(s): {target}")
                 results.append({"category": category.slug, "row_count": len(rows), "snapshot": str(target), "status": "ok"})
             except Exception as exc:
-                print(f"  failed: {exc}")
-                results.append({"category": category.slug, "row_count": 0, "snapshot": None, "status": "failed", "error": str(exc)})
+                print(f"  full query failed: {exc}")
+                fallback_sql = build_line_review_sql(category, paths, include_purchase_order_facts=False)
+                try:
+                    print("  retrying with fallback query without PO facts...")
+                    rows = client.execute_sql(fallback_sql, timeout_seconds=timeout_seconds)
+                    target = write_snapshot(paths, category, fallback_sql, rows)
+                    print(f"  wrote {len(rows)} fallback row(s): {target}")
+                    results.append(
+                        {
+                            "category": category.slug,
+                            "row_count": len(rows),
+                            "snapshot": str(target),
+                            "status": "ok_fallback_without_po_facts",
+                            "fallback_reason": str(exc),
+                        }
+                    )
+                except Exception as fallback_exc:
+                    print(f"  failed: {fallback_exc}")
+                    results.append(
+                        {
+                            "category": category.slug,
+                            "row_count": 0,
+                            "snapshot": None,
+                            "status": "failed",
+                            "error": str(fallback_exc),
+                            "first_error": str(exc),
+                        }
+                    )
     return {
         "generated_at": utc_now(),
         "categories": len(categories),
