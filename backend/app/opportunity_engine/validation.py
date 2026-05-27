@@ -1,11 +1,56 @@
 from __future__ import annotations
 
+import ctypes
 import platform
+import subprocess
+import time
 from pathlib import Path
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
 
 from openpyxl import load_workbook
+
+
+def _retry_com_cleanup(action) -> Exception | None:
+    last_error: Exception | None = None
+    for _ in range(3):
+        try:
+            action()
+            return None
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.5)
+    return last_error
+
+
+def _retry_com_result(action):
+    last_error: Exception | None = None
+    for _ in range(5):
+        try:
+            return action(), None
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.75)
+    return None, last_error
+
+
+def _excel_process_id(excel) -> int | None:
+    try:
+        hwnd = int(excel.Hwnd)
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value) or None
+    except Exception:
+        return None
+
+
+def _terminate_excel_process(pid: int) -> None:
+    subprocess.run(
+        ["taskkill", "/PID", str(pid), "/T", "/F"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 def validate_workbook(path: Path, required_sheets: list[str]) -> list[str]:
@@ -86,17 +131,38 @@ def try_excel_com_open_save(path: Path) -> tuple[bool, str]:
 
     excel = None
     workbook = None
+    excel_pid = None
+    ok = False
+    message = ""
     try:
         excel = win32com.client.DispatchEx("Excel.Application")
+        excel_pid = _excel_process_id(excel)
         excel.Visible = False
         excel.DisplayAlerts = False
-        workbook = excel.Workbooks.Open(str(path))
-        workbook.Save()
-        return True, "Excel COM open/save validation passed."
+        workbook, exc = _retry_com_result(lambda: excel.Workbooks.Open(str(path.resolve())))
+        if exc:
+            raise exc
+        exc = _retry_com_cleanup(lambda: workbook.Save())
+        if exc:
+            raise exc
+        ok = True
+        message = "Excel COM open/save validation passed."
     except Exception as exc:
-        return False, f"Excel COM validation failed: {exc}"
+        message = f"Excel COM validation failed: {exc}"
     finally:
+        cleanup_errors: list[str] = []
         if workbook is not None:
-            workbook.Close(SaveChanges=False)
+            exc = _retry_com_cleanup(lambda: workbook.Close(SaveChanges=False))
+            if exc:
+                cleanup_errors.append(f"workbook close failed: {exc}")
         if excel is not None:
-            excel.Quit()
+            exc = _retry_com_cleanup(lambda: excel.Quit())
+            if exc:
+                cleanup_errors.append(f"Excel quit failed: {exc}")
+        if excel_pid is not None:
+            time.sleep(0.5)
+            _terminate_excel_process(excel_pid)
+        if cleanup_errors:
+            ok = False
+            message = f"{message} Cleanup warning: {' | '.join(cleanup_errors)}"
+    return ok, message
