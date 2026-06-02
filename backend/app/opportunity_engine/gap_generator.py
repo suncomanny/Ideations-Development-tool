@@ -340,11 +340,16 @@ def _backfill_rows(
         return exact_rows, []
 
     exact_keys = {_row_identity(row) for row in exact_rows}
+    allowed_related = set(RELATED_CATEGORY_BACKFILL.get(category.slug, []))
+    if not allowed_related:
+        return list(exact_rows), []
+
     candidates = [
         row for row in all_rows
         if _row_identity(row)
         and _row_identity(row) not in exact_keys
         and not _match_category(category, row.get("subcategory"))
+        and _category_slug(row.get("subcategory")) in allowed_related
         and _backfill_allowed(category, row)
     ]
     candidates.sort(key=lambda row: (_related_rank(category, row), *_priority_score(row), _row_identity(row)))
