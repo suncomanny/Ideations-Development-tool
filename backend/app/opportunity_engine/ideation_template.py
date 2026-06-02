@@ -188,9 +188,11 @@ def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
             recommendation = record.get("Recommendation")
             is_supplemental = str(recommendation or "").strip().lower().startswith("[supplemental candidate]")
             if recommendation and ((record.get("Priority") == "High" and record.get("Confidence") == "High") or is_supplemental):
+                why_text = str(record.get("Why This Is A True Gap") or "").lower()
+                source_label = "Amazon" if "amazon/stackline-derived display row" in why_text else "Sunco.com/ecommerce"
                 exact_source_names.add(str(record.get("Recommendation")).strip().lower())
                 rows.append({
-                    "source": "Sunco.com/ecommerce",
+                    "source": source_label,
                     "classification": "True Gap",
                     "subcategory": record.get("Subcategory"),
                     "name": record.get("Recommendation"),

@@ -3,6 +3,113 @@
   "description": "Category-specific SKU feature signals used to populate Section F from structured Step 2 attributes.",
   "profiles": [
     {
+      "id": "panel_troffer",
+      "label": "Panel and troffer SKU signals",
+      "category_matches": ["Panels"],
+      "subcategory_matches": ["Panels", "Ceiling panels", "Ceiling panel lights"],
+      "match_keywords": [
+        "panel",
+        "ceiling panel",
+        "flat panel",
+        "troffer",
+        "grid frame",
+        "center basket",
+        "direct mount",
+        "surface mount"
+      ],
+      "static_features": ["integrated LED", "0-10V dimmable"],
+      "feature_fields": [
+        {
+          "path": "identity.ideation_name",
+          "extractors": ["size_range", "style_keywords", "mounting_keywords", "color_mode_keywords", "power_keywords"]
+        },
+        {
+          "path": "physical.size_form_factor",
+          "extractors": ["size_range", "style_keywords", "mounting_keywords"]
+        },
+        {
+          "path": "physical.mounting_type",
+          "extractors": ["mounting_keywords"]
+        },
+        {
+          "path": "electrical.cct_primary",
+          "extractors": ["color_mode_keywords"]
+        },
+        {
+          "path": "electrical.wattage_primary",
+          "extractors": ["power_keywords"]
+        },
+        {
+          "path": "controls.dimming_type",
+          "extractors": ["control_keywords"]
+        },
+        {
+          "path": "features.emergency_battery",
+          "extractors": ["emergency_keywords"]
+        }
+      ],
+      "style_keywords": {
+        "flat panel": "flat panel",
+        "troffer": "troffer",
+        "grid frame": "grid frame",
+        "center basket": "center basket",
+        "back-lit": "back-lit panel",
+        "backlit": "back-lit panel",
+        "edge-lit": "edge-lit panel"
+      },
+      "mounting_keywords": {
+        "direct mount": "direct mount",
+        "surface mount": "surface mount",
+        "drop ceiling": "drop ceiling",
+        "lay in": "lay-in grid",
+        "lay-in": "lay-in grid",
+        "recessed": "recessed grid",
+        "flush mount": "flush mount",
+        "retrofit": "retrofit kit"
+      },
+      "power_keywords": {
+        "selectable wattage": "selectable wattage",
+        "wattage selectable": "selectable wattage",
+        "5-wattage": "5-wattage selectable",
+        "30w": "30W",
+        "40w": "40W",
+        "50w": "50W",
+        "60w": "60W",
+        "72w": "72W"
+      },
+      "control_keywords": {
+        "0-10v": "0-10V dimming",
+        "triac": "TRIAC dimming",
+        "motion": "motion sensor",
+        "sensor": "sensor ready"
+      },
+      "emergency_keywords": {
+        "battery": "emergency battery",
+        "emergency": "emergency backup",
+        "90": "90-minute runtime"
+      },
+      "color_mode_keywords": {
+        "3000": "3000K",
+        "3500": "3500K",
+        "4000": "4000K",
+        "5000": "5000K",
+        "6500": "6500K",
+        "selectable": "selectable CCT",
+        "5cct": "5CCT",
+        "3cct": "3CCT"
+      },
+      "certification_keywords": {
+        "ul": "UL",
+        "etl": "ETL",
+        "dlc": "DLC",
+        "fcc": "FCC",
+        "rohs": "RoHS"
+      },
+      "finish_keywords": {},
+      "material_keywords": {},
+      "max_features": 14
+    },
+    {
       "id": "under_cabinet_task_lighting",
       "label": "Under-cabinet task lighting SKU signals",
       "category_matches": ["Under cabinet"],

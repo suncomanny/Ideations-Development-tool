@@ -98,12 +98,23 @@ def load_category_intelligence(paths: ProjectPaths, category: Category) -> Categ
                 """
                 SELECT feature_signals_json
                 FROM category_feature_signal_profile
-                WHERE category_id = ? OR category_id IS NULL
-                ORDER BY CASE WHEN category_id = ? THEN 0 ELSE 1 END, profile_id
+                WHERE category_id = ?
+                ORDER BY profile_id
                 """,
-                (category_id, category_id),
+                (category_id,),
             )
         )
+        if not profile_rows:
+            profile_rows = _rows(
+                connection.execute(
+                    """
+                    SELECT feature_signals_json
+                    FROM category_feature_signal_profile
+                    WHERE category_id IS NULL
+                    ORDER BY profile_id
+                    """
+                )
+            )
         evidence = _rows(
             connection.execute(
                 """

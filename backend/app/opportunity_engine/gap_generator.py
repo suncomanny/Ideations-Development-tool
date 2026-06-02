@@ -67,7 +67,8 @@ TRUE_GAP_HEADERS = {
 
 
 ALIASES = {
-    "ceiling_fixtures": {"ceiling fixtures", "ceiling panels / fixtures", "residential decor fixtures"},
+    "panels": {"panels", "panel lights", "ceiling panels", "ceiling panel lights", "ceiling panels / fixtures", "flat panels"},
+    "ceiling_fixtures": {"ceiling fixtures", "residential decor fixtures"},
     "wall_sconces": {"wall sconces", "wall sconces"},
     "under_cabinet": {"under cabinet", "under cabinet / tape"},
     "tape_rope_light": {"tape/rope light", "under cabinet / tape"},
@@ -328,6 +329,23 @@ def _amazon_supplement(row: dict[str, Any], category: Category) -> dict[str, Any
     return supplement
 
 
+def _amazon_to_main_tab_row(row: dict[str, Any], category: Category) -> dict[str, Any]:
+    display = deepcopy(row)
+    display["_amazon_main_tab_display"] = True
+    display["subcategory"] = category.run_name
+    display["recommendation"] = row.get("recommendation")
+    display["example"] = row.get("example")
+    display["source_url"] = row.get("review_url")
+    display["why_gap"] = (
+        "Amazon/Stackline-derived display row shown because no separate Sunco.com/ecommerce "
+        f"recommendation rows were available for {category.run_name}. "
+        f"Evidence: {row.get('evidence') or ''}"
+    ).strip()
+    display["pm_action"] = row.get("action")
+    display["source_systems"] = row.get("source_systems") or ["Amazon/Stackline evidence"]
+    return display
+
+
 def _backfill_rows(
     *,
     category: Category,
@@ -422,6 +440,10 @@ def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any
         all_rows=amazon_backfill_pool,
         row_factory=_amazon_supplement,
     )
+    source_from_amazon_count = 0
+    if not source_rows and exact_amazon_rows:
+        source_rows = [_amazon_to_main_tab_row(row, category) for row in exact_amazon_rows]
+        source_from_amazon_count = len(source_rows)
 
     generated = parse_generated_date(source_payload) or parse_generated_date(amazon_payload)
     return {
@@ -433,7 +455,8 @@ def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any
         "source_rows": source_rows,
         "amazon_rows": amazon_rows,
         "source_exact_count": len(exact_source_rows),
-        "source_supplemental_count": max(0, len(source_rows) - len(exact_source_rows)),
+        "source_supplemental_count": len([row for row in source_rows if row.get("_supplemental")]),
+        "source_from_amazon_count": source_from_amazon_count,
         "source_supplemental_warnings": source_warnings,
         "amazon_exact_count": len(exact_amazon_rows),
         "amazon_supplemental_count": max(0, len(amazon_rows) - len(exact_amazon_rows)),
@@ -507,9 +530,10 @@ def _write_summary(workbook, category: Category, data: dict[str, Any]) -> None:
         ("Generated", date.today().isoformat()),
         ("Primary competitor channel", "Amazon"),
         ("Secondary channel", "Home Depot Marketplace"),
-        ("Sunco.com/ecommerce recommendations", len(data["source_rows"])),
+        ("Main Recommendations tab rows", len(data["source_rows"])),
         ("Amazon recommendations", len(data["amazon_rows"])),
         ("Exact source recommendations", data["source_exact_count"]),
+        ("Amazon-derived main-tab display rows", data.get("source_from_amazon_count", 0)),
         ("Supplemental source candidates", data["source_supplemental_count"]),
         ("Exact Amazon recommendations", data["amazon_exact_count"]),
         ("Supplemental Amazon candidates", data["amazon_supplemental_count"]),
@@ -604,6 +628,14 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
         ("Freshness", "All", "Generated date", str(data.get("generated") or "Unknown"), ""),
         ("Category intelligence", category.run_name, "Backend SQLite database", format_intelligence_audit(intelligence), str(intelligence.database_path)),
     ]
+    if data.get("source_from_amazon_count"):
+        rows.append((
+            "Display note",
+            category.run_name,
+            "Amazon-derived main-tab rows",
+            f"{data['source_from_amazon_count']} exact Amazon/Stackline row(s) were mirrored into the main Recommendations tab because no separate Sunco.com/ecommerce rows were available.",
+            data["amazon_path"],
+        ))
     line_review_context = data.get("line_review_context")
     if line_review_context:
         rows.extend(line_review_source_audit_rows(line_review_context))
@@ -719,6 +751,7 @@ def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh
             ("Promotion rule", "A supplemental row is not considered a true gap until live evidence confirms category fit, demand, Sunco coverage gap, and PM actionability."),
             ("Image status", "\n".join(image_status) if image_status else "No images embedded for this category run."),
             ("Supplemental candidate rule", f"Use natural exact-category results plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} adjacent supplemental candidate per tab. Supplemental rows are adjacent seeds, not exact category proof."),
+            ("Amazon-derived main-tab display rows", str(data.get("source_from_amazon_count", 0))),
             ("Supplemental warnings", "\n".join(data.get("supplemental_warnings", [])) or "No supplemental rows were needed."),
             ("Category intelligence audit", format_intelligence_audit(data["category_intelligence"])),
         ]
