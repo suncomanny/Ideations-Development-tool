@@ -338,6 +338,131 @@ def _extract_sizes(text: str) -> list[str]:
     ]
 
 
+def _extract_panel_size_tokens(text: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(r"\b(?:1|2|4)\s*x\s*(?:2|4)\b", text, flags=re.IGNORECASE):
+        value = re.sub(r"\s+", "", match.group(0)).lower()
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _extract_wattage_text(text: str) -> str | None:
+    values: list[str] = []
+    for match in re.finditer(r"\b\d+(?:\.\d+)?\s*W\b", text, flags=re.IGNORECASE):
+        value = match.group(0).replace(" ", "").upper()
+        if value not in values:
+            values.append(value)
+    if not values:
+        return None
+    return " / ".join(values[:5]) + " target from Step 1 evidence"
+
+
+def _extract_lumens_text(text: str) -> str | None:
+    values: list[str] = []
+    for match in re.finditer(r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*(?:lm|lumens)\b", text, flags=re.IGNORECASE):
+        value = re.sub(r"\s+", " ", match.group(0)).strip()
+        value = re.sub(r"\blm\b", "lumens", value, flags=re.IGNORECASE)
+        if value not in values:
+            values.append(value)
+    if not values:
+        return None
+    return " / ".join(values[:4]) + " target from Step 1 evidence"
+
+
+def _extract_cct_text(text: str) -> tuple[str | None, str | None]:
+    lowered = text.lower()
+    values: list[str] = []
+    for match in re.finditer(r"\b(?:27|30|35|40|50|65)00K\b|\b\d{4}\s*K\b", text, flags=re.IGNORECASE):
+        value = match.group(0).replace(" ", "").upper()
+        if value not in values:
+            values.append(value)
+    if "5cct" in lowered:
+        values = values or ["3000K", "3500K", "4000K", "5000K", "6500K"]
+        return "5CCT selectable", "/".join(values[:5]) if values else "5CCT selectable"
+    if "3cct" in lowered:
+        values = values or ["3000K", "4000K", "5000K"]
+        return "3CCT selectable", "/".join(values[:3]) if values else "3CCT selectable"
+    if values:
+        return "/".join(values[:4]), values[-1]
+    if "selectable cct" in lowered or "switchable cct" in lowered:
+        return "Selectable CCT target from Step 1 evidence", None
+    return None, None
+
+
+def _infer_integrated_mounting(text: str, default: str | None = None) -> str:
+    lowered = text.lower()
+    if "surface mount" in lowered or "surface-mount" in lowered:
+        return "Surface mount"
+    if "direct mount" in lowered or "direct-mount" in lowered:
+        return "Direct ceiling mount"
+    if "drop ceiling" in lowered or "lay in" in lowered or "lay-in" in lowered:
+        return "Drop ceiling / lay-in grid"
+    if "troffer" in lowered or "center basket" in lowered:
+        return "Recessed grid / troffer"
+    if "flat panel" in lowered or "panel" in lowered:
+        return "Commercial ceiling panel mount"
+    return default or "Mounting type TBD from Step 1 evidence and supplier file"
+
+
+def _infer_integrated_form_factor(item: dict[str, Any], text: str) -> str:
+    lowered = text.lower()
+    pieces: list[str] = []
+    sizes = _extract_panel_size_tokens(text)
+    if sizes:
+        pieces.append("/".join(sizes))
+    if "center basket" in lowered:
+        pieces.append("center basket troffer")
+    elif "troffer" in lowered:
+        pieces.append("troffer")
+    elif "surface mount" in lowered or "surface-mount" in lowered:
+        pieces.append("surface-mount panel")
+    elif "grid frame" in lowered:
+        pieces.append("grid frame panel")
+    elif "flat panel" in lowered:
+        pieces.append("flat panel")
+    elif "panel" in lowered:
+        pieces.append("panel")
+    if not pieces:
+        pieces.append(str(item.get("name") or "").strip() or "Integrated LED fixture")
+    return ", ".join(piece for piece in pieces if piece)
+
+
+def _is_decorative_profile(category: Category, profile: dict[str, Any]) -> bool:
+    return profile.get("inherits") == "decorative_fixture" or category.slug in {"chandeliers"}
+
+
+def _apply_integrated_led_enrichment(enriched: dict[str, Any], category: Category, item: dict[str, Any], text: str) -> None:
+    cct_primary, cct_max = _extract_cct_text(text)
+    lowered = text.lower()
+    enriched["size_form_factor"] = _infer_integrated_form_factor(item, text)
+    enriched["mounting_type"] = _infer_integrated_mounting(text, enriched.get("mounting_type"))
+    enriched["material"] = enriched.get("material")
+    enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
+    enriched["bulb_base_type"] = None
+    enriched["bulb_shape"] = None
+    enriched["wattage_primary"] = _extract_wattage_text(text) or enriched.get("wattage_primary") or "Integrated LED wattage TBD from supplier file"
+    enriched["wattage_max"] = enriched.get("wattage_max") or enriched["wattage_primary"]
+    enriched["cct_primary"] = cct_primary or enriched.get("cct_primary") or "CCT TBD from Step 1 evidence and supplier file"
+    enriched["cct_max"] = cct_max or enriched.get("cct_max")
+    enriched["lumens_target"] = _extract_lumens_text(text) or enriched.get("lumens_target") or "Lumen output TBD from Step 1 evidence and supplier file"
+    enriched["efficiency"] = enriched.get("efficiency") or "Validate lm/W from final wattage and lumen target"
+    enriched["power_factor"] = enriched.get("power_factor") or ">=0.9 target for commercial integrated LED driver"
+    enriched["operating_temperature"] = enriched.get("operating_temperature") or "Commercial indoor ambient; supplier rating TBD"
+    if "triac" in lowered:
+        enriched["dimming_type"] = "TRIAC dimming"
+    elif "0-10v" in lowered or "0-10 v" in lowered:
+        enriched["dimming_type"] = "0-10V dimming"
+    if "selectable wattage" in lowered or "wattage selectable" in lowered or "multi-wattage" in lowered or "5-wattage" in lowered:
+        enriched["selectable_wattage"] = "Yes"
+    if "selectable cct" in lowered or "switchable cct" in lowered or "3cct" in lowered or "5cct" in lowered:
+        enriched["selectable_cct"] = "Yes"
+    if "emergency backup" in lowered or "emergency battery" in lowered:
+        enriched["emergency_battery"] = "Yes - emergency backup named in Step 1 evidence"
+    if "motion" in lowered or "sensor" in lowered:
+        enriched["motion_sensor"] = "Yes - sensor/control feature named in Step 1 evidence"
+
+
 def _infer_finish(text: str) -> str | None:
     lowered = text.lower()
     if "black/gold" in lowered or ("black" in lowered and "gold" in lowered):
@@ -576,7 +701,7 @@ def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[
             }
             candidates.append(candidate)
         return candidates
-    if category.slug != "chandeliers" and len(light_counts) <= 1 and len(sizes) <= 1:
+    if category.slug != "chandeliers":
         return [item]
     if not light_counts and len(sizes) <= 1:
         return [item]
@@ -676,6 +801,7 @@ def _enrich_item(
     text = _evidence_text(item)
     bulb_base = _extract_bulb_bases(text)
     light_count = _extract_light_count(text)
+    is_decorative = _is_decorative_profile(category, profile)
     pricing = _market_msrp_target(item, market_samples)
     link_validation = format_validation_notes(validate_urls(extract_urls(item.get("url")), url_validation_cache))
     enriched = {
@@ -683,31 +809,42 @@ def _enrich_item(
         "subcategory": defaults.get("subcategory") or category.run_name,
         "ideation_name": str(item.get("name") or "").strip(),
         "sunco_reference_sku": "TBD - use best-selling adjacent Sunco family by category revenue",
-        "reference_sku_source": "No exact Sunco chandelier SKU identified; use revenue proxy during refresh",
+        "reference_sku_source": f"No exact Sunco {category.run_name} SKU identified from Step 1 evidence; use revenue proxy during refresh",
         "strategy": _strategy_from_classification(item.get("classification")),
         "known_competitors": _build_known_competitors(item),
     }
     enriched.update(defaults)
 
-    enriched["size_form_factor"] = _infer_size_form_factor(item, text)
-    enriched["mounting_type"] = _infer_mounting(text)
-    enriched["material"] = _infer_material(text) or enriched.get("material")
-    enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
-    enriched["bulb_base_type"] = bulb_base or "E12/E26 target; validate by design size and supplier options"
-    if light_count and bulb_base:
-        normalized_count = light_count.replace("; optional", " / optional")
-        enriched["wattage_primary"] = f"Bulb-dependent; target {normalized_count} using {bulb_base} LED bulbs"
-    elif light_count:
-        enriched["wattage_primary"] = f"Bulb-dependent; target {light_count} replaceable LED bulbs"
+    if is_decorative:
+        enriched["size_form_factor"] = _infer_size_form_factor(item, text)
+        enriched["mounting_type"] = _infer_mounting(text)
+        enriched["material"] = _infer_material(text) or enriched.get("material")
+        enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
+        enriched["bulb_base_type"] = bulb_base or "E12/E26 target; validate by design size and supplier options"
+        if light_count and bulb_base:
+            normalized_count = light_count.replace("; optional", " / optional")
+            enriched["wattage_primary"] = f"Bulb-dependent; target {normalized_count} using {bulb_base} LED bulbs"
+        elif light_count:
+            enriched["wattage_primary"] = f"Bulb-dependent; target {light_count} replaceable LED bulbs"
+        else:
+            enriched["wattage_primary"] = "Bulb-dependent; confirm bulb count during supplier research"
+        enriched["wattage_max"] = "Socket max TBD by supplier and certification file"
+        enriched["cct_primary"] = "2700K-3000K warm white target if bulbs are included"
+        enriched["cct_max"] = "3000K target; avoid selectable CCT unless integrated LED"
+        enriched["lumens_target"] = "Bulb-dependent; validate total fixture output by included bulb bundle"
+        enriched["efficiency"] = "Bulb-dependent"
+        enriched["power_factor"] = "N/A for replaceable bulbs; validate if integrated LED"
+        enriched["operating_temperature"] = "Residential indoor ambient; supplier rating TBD"
+    elif category.slug == "under_cabinet":
+        enriched["size_form_factor"] = _infer_integrated_form_factor(item, text)
+        enriched["mounting_type"] = _infer_integrated_mounting(text, enriched.get("mounting_type"))
+        enriched["material"] = enriched.get("material")
+        enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
+        enriched["bulb_base_type"] = None
+        enriched["bulb_shape"] = None
     else:
-        enriched["wattage_primary"] = "Bulb-dependent; confirm bulb count during supplier research"
-    enriched["wattage_max"] = "Socket max TBD by supplier and certification file"
-    enriched["cct_primary"] = "2700K-3000K warm white target if bulbs are included"
-    enriched["cct_max"] = "3000K target; avoid selectable CCT unless integrated LED"
-    enriched["lumens_target"] = "Bulb-dependent; validate total fixture output by included bulb bundle"
-    enriched["efficiency"] = "Bulb-dependent"
-    enriched["power_factor"] = "N/A for replaceable bulbs; validate if integrated LED"
-    enriched["operating_temperature"] = "Residential indoor ambient; supplier rating TBD"
+        _apply_integrated_led_enrichment(enriched, category, item, text)
+
     if category.slug == "under_cabinet":
         lowered = text.lower()
         if "magnetic" in lowered or "rechargeable" in lowered or "puck" in lowered:

@@ -7,7 +7,6 @@ from .paths import ProjectPaths
 
 def collect_sql_text(paths: ProjectPaths, category_slug: str) -> str:
     sql_roots = [
-        paths.cache / "ideation_data" / "_shared" / "sql",
         paths.cache / "ideation_data" / category_slug / "sql",
     ]
 

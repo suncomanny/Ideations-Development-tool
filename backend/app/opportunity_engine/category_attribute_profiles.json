@@ -1,4 +1,42 @@
 {
+  "panels": {
+    "notes": "Defaults used for integrated LED panel and troffer concepts when Step 1 evidence does not provide a stronger SKU-specific value.",
+    "defaults": {
+      "subcategory": "Panels",
+      "voltage": "120-277V target; validate against Step 1 listing and supplier file",
+      "selectable_wattage": "TBD from Step 1 evidence and supplier options",
+      "selectable_cct": "TBD from Step 1 evidence and supplier options",
+      "cri": "80+ target",
+      "dimmable": "Yes",
+      "dimming_type": "0-10V dimming target unless Step 1 evidence names TRIAC or another control type",
+      "frequency": "50/60Hz target where universal-voltage driver applies",
+      "driver_type": "Integrated LED driver",
+      "ip_rating": null,
+      "moisture_rating": "Damp rated target for commercial indoor ceiling applications; validate listing claim",
+      "indoor_outdoor_use": "Indoor",
+      "wiring_type": "Hardwired",
+      "emergency_battery": "Only if Step 1 evidence names emergency backup",
+      "run_time": "90-minute target only when emergency backup is included",
+      "charge_time": null,
+      "switching_time": null,
+      "motion_sensor": "Only if Step 1 evidence names motion or sensor-ready functionality",
+      "motion_duration": null,
+      "daylight_sensor_auto_dimming": "Optional; validate demand before adding complexity",
+      "smart_connected": "No unless Step 1 evidence specifically supports controls/connectivity",
+      "linkable": "No",
+      "bulb_base_type": null,
+      "bulb_shape": null,
+      "beam_angle": "Wide commercial ceiling distribution; exact photometrics TBD",
+      "target_margin_shopify": "60% target",
+      "target_margin_amazon": "70% target",
+      "cost_type": "Landed",
+      "certifications": "ETL or UL, DLC where required, FCC/RoHS as applicable",
+      "lifetime_hours": "50,000+ hour target for integrated LEDs",
+      "warranty": "5 year target; validate against supplier warranty and Sunco category standard",
+      "priority_channels": "Amazon, Sunco.com, Home Depot Marketplace",
+      "stackline_data": "Yes"
+    }
+  },
   "decorative_fixture": {
     "notes": "Defaults used only when the Step 1 evidence does not provide a stronger value. These are intended as research starting points, not locked PRD specs.",
     "defaults": {
