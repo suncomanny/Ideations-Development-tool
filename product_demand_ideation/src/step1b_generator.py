@@ -7,6 +7,7 @@ import mimetypes
 import urllib.error
 import urllib.parse
 import urllib.request
+from html import unescape
 from collections import defaultdict
 from io import BytesIO
 from copy import deepcopy
@@ -15,7 +16,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from ecommerce_evidence import ecommerce_rows_to_step1_rows, load_or_refresh_ecommerce_snapshot
+from ecommerce_evidence import ecommerce_rows_to_step1_rows, is_grow_light_candidate, load_or_refresh_ecommerce_snapshot
 from luminaire_performance import is_luminaire_category, normalize_luminaire_performance, performance_note
 from odbc_client import execute_odbc_sql
 from product_demand_categories import choose_product_demand_category
@@ -58,6 +59,35 @@ STACKLINE_SEGMENT_OVERRIDES = {
     "wraparounds": ("Wraparound LED - Broad V2", "Wraparound LED"),
     "ufo": ("UFO High Bays", "UFO High Bay Overview", "UFO Lighting", "UFO"),
     "wall_packs": ("Wall Packs", "wall Packs", "White Wall Packs"),
+    "commercial_grow_lights": (
+        "2FT Backless Grow Light Fixture",
+        "2ft Backless Grow Fixtures",
+        "2x2 Bar Grow Light Fixture",
+        "2x2 Flat Panel Grow Light Fixture",
+        "2x4 Bar Grow Light Fixture",
+        "2x4 Flat Panel Grow Light Fixture",
+        "3x3 Bar Grow Light Fixture",
+        "3x3 Flat Panel Grow Light Fixture",
+        "4ft 45W V-Shape Reflector T8 Grow Fixture",
+        "4ft Grow Light with Timer & Selectable Spectrum",
+        "4x4 Bar Grow Light Fixture",
+        "4x4 Flat Panel Grow Light Fixture",
+        "5x5 Bar Grow Light Fixture",
+        "Bar Grow Light Fixture",
+        "Flat Panel Grow Light Fixture",
+        "Full Spectrum Strip T8 Grow Light",
+        "Full Spectrum V-Shaped Strip Grow Light",
+        "KA - Grow Lights",
+        "SHOP LIGHT - GROW LIGHTS",
+    ),
+    "residential_grow_lights": (
+        "4ft Grow Light with Timer & Selectable Spectrum",
+        "Full Spectrum Strip T8 Grow Light",
+        "Full Spectrum V-Shaped Strip Grow Light",
+        "Grow Light [Archived]",
+        "KA - Grow Lights",
+        "SHOP LIGHT - GROW LIGHTS",
+    ),
     "slims": ("RECESSED - Slims",),
     "recessed": ("CC Broad - Recessed Lighting", "RECESSED - ALL", "RECESSED - Retrofits", "RECESSED - Slims"),
     "under_cabinet": ("Under Cabinet Light Fixture", "Under Cabinet Light Fixture - 24 inch"),
@@ -123,7 +153,9 @@ def _existing_step1_imports():
 
 
 def _text(value: Any) -> str:
-    return str(value or "")
+    text = unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _tokens(value: str) -> set[str]:
@@ -591,14 +623,25 @@ def _industrial_design_cues(text: str) -> list[str]:
     return cues[:5]
 
 
-def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: str, limit: int = 10) -> list[dict[str, Any]]:
+def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: str, limit: int = 10, category_slug: str | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for item in items[:limit]:
+    for item in items:
         title = _text(item.get("title"))
         brand = _text(item.get("brand_name") or item.get("brand"))
         model = _text(item.get("model_number") or item.get("model"))
         segment = _text(item.get("segment_name") or item.get("segment"))
         asin = _text(item.get("retailer_sku") or item.get("asin"))
+        if category_slug in {"commercial_grow_lights", "residential_grow_lights"} and not is_grow_light_candidate(
+            {
+                "name": title,
+                "description": f"{brand} {model} {segment}",
+                "category": item.get("category_name"),
+                "product_type": item.get("subcategory_name"),
+                "brand": brand,
+                "sku": asin,
+            }
+        ):
+            continue
         retail_sales = _as_float(item.get("retail_sales"))
         units_sold = _as_float(item.get("units_sold"))
         avg_price = _as_float(item.get("avg_retail_price") or item.get("price"))
@@ -644,6 +687,8 @@ def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: s
                 "_stackline_local_units": units_sold,
             }
         )
+        if len(rows) >= limit:
+            break
     return rows
 
 
@@ -655,7 +700,7 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
         items = execute_odbc_sql(REDSHIFT_ODBC_CONNECTION, sql, timeout_seconds=240)
     except Exception as exc:
         return [], f"Redshift Stackline query failed: {exc}"
-    return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit), sql
+    return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit, category_slug=category_slug), sql
 
 
 def _stackline_amazon_rows_from_csv(paths: Any, category_slug: str, category_name: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -724,7 +769,7 @@ def _stackline_amazon_rows_from_csv(paths: Any, category_slug: str, category_nam
         }
         for item in ranked
     ]
-    return _stackline_items_to_amazon_rows(normalized, "Local Stackline Amazon summary", limit=limit)
+    return _stackline_items_to_amazon_rows(normalized, "Local Stackline Amazon summary", limit=limit, category_slug=category_slug)
 
 
 def _amazon_row_identity(row: dict[str, Any]) -> str:

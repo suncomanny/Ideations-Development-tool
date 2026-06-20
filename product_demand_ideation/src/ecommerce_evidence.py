@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import unescape
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -81,6 +82,74 @@ ELECTRICAL_EXCLUDE_TERMS = DEFAULT_EXCLUDE_TERMS + (
     "watt",
 )
 
+GROW_LIGHT_EXCLUDE_TERMS = DEFAULT_EXCLUDE_TERMS + (
+    "controller",
+    "control",
+    "controls",
+    "digital programmable timer",
+    "timer",
+    "outlet",
+    "nutrient",
+    "fertilizer",
+    "hydroponic",
+    "tent",
+    "tray",
+    "rope ratchet",
+    "hanger",
+    "accessory",
+)
+
+GROW_LIGHT_STRONG_TERMS = (
+    "grow light",
+    "grow lights",
+    "grow lamp",
+    "grow bulb",
+    "growing lamp",
+    "plant light",
+    "plant lights",
+    "plant grow",
+    "horticulture led",
+    "horticulture luminaire",
+    "horticulture lamp",
+    "horticulture vapor tight",
+    "horticulture top light",
+    "horticulture starlight",
+    "led horticulture",
+)
+
+GROW_LIGHT_SUPPORT_TERMS = (
+    "full spectrum",
+    "seed starting",
+    "veg",
+    "vegetable",
+    "bloom",
+    "greenhouse",
+    "ppfd",
+    " ppf ",
+    "umol",
+    "par efficacy",
+    "indoor plants",
+    "indoor growing",
+)
+
+GROW_LIGHT_ALWAYS_REJECT_TERMS = (
+    "surge protector",
+    "power strip",
+    "oil filled capacitor",
+    "capacitor",
+)
+
+GROW_LIGHT_CONTEXT_REJECT_TERMS = (
+    "outlet timer",
+    "mechanical timer",
+    "programmable timer",
+    "nutrient",
+    "fertilizer",
+    "rope ratchet",
+    "hanger",
+    "replacement cord",
+)
+
 
 CATEGORY_PROFILES: dict[str, CategoryProfile] = {
     "area_lights": CategoryProfile(("area light",), (), FIXTURE_EXCLUDE_TERMS + ("slipfitter mount", "tenon")),
@@ -91,7 +160,18 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
     "chandeliers": CategoryProfile(("chandelier",), ("chandelier fixture", "chandelier light", "chandeliers"), FIXTURE_EXCLUDE_TERMS),
     "clean_room_lighting": CategoryProfile((), ("clean room", "cleanroom"), FIXTURE_EXCLUDE_TERMS),
     "commercial_fans": CategoryProfile((), ("commercial fan", "ceiling fan", "industrial fan", "destratification fan"), FIXTURE_EXCLUDE_TERMS),
-    "commercial_grow_lights": CategoryProfile(("grow light",), ("grow",)),
+    "commercial_grow_lights": CategoryProfile(
+        ("grow light",),
+        (
+            "grow light",
+            "grow lamp",
+            "horticulture led",
+            "horticulture luminaire",
+            "horticulture",
+        ),
+        GROW_LIGHT_EXCLUDE_TERMS,
+        True,
+    ),
     "commercial_landscape": CategoryProfile(("pathway/landscape", "bollard"), ("landscape fixture", "path light", "pathway light", "bollard"), FIXTURE_EXCLUDE_TERMS + ("deck light", "step light")),
     "commercial_security": CategoryProfile(("security", "flood light"), ("security", "wall light"), FIXTURE_EXCLUDE_TERMS + ("lampholder",)),
     "dimmers": CategoryProfile(("dimmer/switch",), ("dimmer", "switch", "occupancy sensor", "motion sensor"), ELECTRICAL_EXCLUDE_TERMS),
@@ -129,7 +209,18 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
     ),
     "pendants": CategoryProfile(("pendant",), ("pendant fixture", "pendant light", "pendants"), FIXTURE_EXCLUDE_TERMS),
     "residential_fans": CategoryProfile((), ("ceiling fan", "residential fan", "fan light kit"), FIXTURE_EXCLUDE_TERMS),
-    "residential_grow_lights": CategoryProfile(("grow light",), ("grow light", "plant light")),
+    "residential_grow_lights": CategoryProfile(
+        ("grow light", "bulb", "lamp"),
+        (
+            "grow light",
+            "plant light",
+            "grow lamp",
+            "plant grow",
+            "full spectrum plant",
+        ),
+        GROW_LIGHT_EXCLUDE_TERMS,
+        True,
+    ),
     "residential_landscape": CategoryProfile(("pathway/landscape", "bollard"), ("landscape fixture", "path light", "pathway light", "garden light"), FIXTURE_EXCLUDE_TERMS + ("deck light", "step light")),
     "residential_security": CategoryProfile(("security", "flood light"), ("security", "motion flood", "flood light"), FIXTURE_EXCLUDE_TERMS + ("lampholder",)),
     "retros": CategoryProfile((), ("retrofit downlight", "downlight retrofit", "recessed retrofit", "gimbal", "eyeball"), FIXTURE_EXCLUDE_TERMS + ("track light",)),
@@ -174,6 +265,34 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
     "wraparounds": CategoryProfile((), ("wraparound", "wrap around"), FIXTURE_EXCLUDE_TERMS),
     "cans": CategoryProfile((), ("recessed can", "can light", "ceiling can"), FIXTURE_EXCLUDE_TERMS),
 }
+
+
+def _is_grow_light_category(category_name: str) -> bool:
+    normalized = category_name.lower().replace("_", " ")
+    return "grow light" in normalized or "grow lights" in normalized
+
+
+def _grow_light_text(row: dict[str, Any]) -> str:
+    return " ".join(
+        _text(row.get(key))
+        for key in ["name", "description", "category", "product_type", "brand", "sku", "url"]
+    ).lower()
+
+
+def is_grow_light_candidate(row: dict[str, Any]) -> bool:
+    text = f" {_grow_light_text(row)} "
+    if any(term in text for term in GROW_LIGHT_ALWAYS_REJECT_TERMS):
+        return False
+    has_strong = any(term in text for term in GROW_LIGHT_STRONG_TERMS)
+    if any(term in text for term in GROW_LIGHT_CONTEXT_REJECT_TERMS) and not has_strong:
+        return False
+    if has_strong:
+        return True
+    has_support = any(term in text for term in GROW_LIGHT_SUPPORT_TERMS)
+    has_plant_context = any(term in text for term in [" plant", " plants", " grow", " growing", " seed", " bloom", " ppfd", " ppf ", " par "])
+    return has_support and has_plant_context and any(
+        light_term in text for light_term in [" led ", " lamp", " bulb", "fixture", "light", "luminaire"]
+    )
 
 
 def utc_now() -> str:
@@ -342,7 +461,16 @@ def load_or_refresh_ecommerce_snapshot(exports_dir: Path, category_slug: str) ->
 
 
 def _text(value: Any) -> str:
-    return str(value or "").strip()
+    text = unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _display_price(value: Any) -> str:
+    text = _text(value)
+    if not text or text.lower() in {"n/a", "na", "none", "null", "nan"}:
+        return "n/a"
+    return f"${text}"
 
 
 def _domain(row: dict[str, Any]) -> str:
@@ -548,8 +676,11 @@ def _priority_confidence(score: float, rows: list[dict[str, Any]]) -> tuple[str,
 
 def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]], limit: int = 16) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+    grow_light_category = _is_grow_light_category(category_name)
     for row in rows:
         if not _text(row.get("url")) or not _text(row.get("name")):
+            continue
+        if grow_light_category and not is_grow_light_candidate(row):
             continue
         signature = _spec_signature(row)
         perf = normalize_luminaire_performance(
@@ -589,7 +720,7 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
         example_text = (
             f"{_text(example.get('brand'))} {_text(example.get('sku'))}: {_text(example.get('name'))} | "
             f"{_text(example.get('lumens'))} | {_text(example.get('wattage'))} | {_text(example.get('cct'))} | "
-            f"{_text(example.get('availability'))} | ${_text(example.get('price')) or 'n/a'}"
+            f"{_text(example.get('availability'))} | {_display_price(example.get('price'))}"
         ).strip()
         candidates.append(
             {
