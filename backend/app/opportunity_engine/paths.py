@@ -55,13 +55,22 @@ class ProjectPaths:
     def research_report_category_outputs(self, category_slug: str) -> Path:
         return self.research_report_outputs / category_slug
 
+    @property
+    def leadership_deck_outputs(self) -> Path:
+        return self.outputs / "Leadership Decks" / "Gate 0"
+
+    def leadership_deck_category_outputs(self, category_slug: str) -> Path:
+        return self.leadership_deck_outputs / category_slug
+
     def ensure(self) -> None:
         for path in [
             self.templates,
             self.gap_outputs,
             self.prd_ideation_outputs,
             self.research_report_outputs,
+            self.leadership_deck_outputs,
             self.cache / "ideation_data",
+            self.cache / "gate0_decks",
             self.cache / "images",
             self.logs,
             self.research_sessions,

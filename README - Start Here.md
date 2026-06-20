@@ -8,6 +8,7 @@ Run the scripts in order:
 1. `1 - Category Ideation Generator.py`
 2. `2 - Ideation Template Generator.py`
 3. `3 - Ideation Research Tool.py`
+4. `4 - Gate 0 Deck Builder.py`
 
 The scripts ask which category to run and list the available category options. Category owner is inferred from `templates/category_reference.csv`; parent categories are intentionally excluded.
 
@@ -93,6 +94,44 @@ Step 3 has two phases:
 
 Use `Check latest session status` any time Step 3 opens a backend folder but no workbook appears. That means the session is prepared, but collection/finalization is not complete.
 
+## Gate 0 Leadership Decks
+
+`4 - Gate 0 Deck Builder.py` creates a leadership opportunity deck from the latest current-program outputs for the selected category. It does not read the legacy Claude deck sources, Helium10 folders, or old line-review workbooks. It only reads:
+
+- latest Step 1 gap workbook
+- latest Step 2 PRD ideation workbook
+- latest Step 3 completed research report, when available
+
+The deck is intended for Manny's Gate 0 / leadership opportunity review with Sam and Simon. It should answer whether selected opportunities should move into PRD/RFQ work. It is not a PO approval deck.
+
+User-facing decks are saved under:
+
+```text
+outputs/Leadership Decks/Gate 0
+```
+
+The backend deck package is saved under:
+
+```text
+backend/cache/gate0_decks
+```
+
+That backend package includes the generated deck config JSON, slide data JSON, and audit JSON. The JSON shape intentionally mirrors the old line-review deck generator's config/slide-data pattern, but all facts come from the new Step 1/2/3 workbooks.
+
+Step 4 requires the `python-pptx` package in the Python environment used to run the scripts. If a computer is missing it, install it once with:
+
+```text
+python -m pip install python-pptx
+```
+
+The deck structure is documented as separate markdown specs under:
+
+```text
+backend/app/opportunity_engine/gate0_deck_specs
+```
+
+Use `deck_instructions.md` for deck-wide rules. Use the individual files under `slides` to change only one slide type, such as the category research snapshot, current line review, ideation introduction, product opportunity, or Gate 0 decision slide. Every generated backend deck package receives a copy of these markdown specs under `markdown_specs` for auditability.
+
 ## Low-Token Clean Run
 
 To test the full workflow without using Claude tokens:
@@ -109,6 +148,7 @@ This produces a research workbook from local/Stackline evidence only. The tool w
 - User-facing gap workbooks are saved in `outputs/Ideations/Gap Workbooks`.
 - User-facing PRD ideation workbooks are saved in `outputs/Ideations/PRD Ideation Workbooks`.
 - User-facing research reports are saved in `outputs/Research/Reports`.
+- User-facing Gate 0 leadership decks are saved in `outputs/Leadership Decks/Gate 0`.
 - Backend data, cache, logs, migrated sessions, and copied tool code live under `backend`.
 
 ## Data Freshness

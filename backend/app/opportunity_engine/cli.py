@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .categories import choose_category
 from .gap_generator import generate_gap_workbook, load_category_data
+from .gate0_deck import generate_gate0_deck, latest_research_report
 from .ideation_template import generate_prd_ideation_workbook, latest_gap_workbook
 from .paths import ProjectPaths
 from .research_tool import (
@@ -217,3 +218,35 @@ def run_step3(root: Path | str) -> None:
     _print_research_status(result, session)
     prompt_file = session / "instructions" / "1 - COPY THIS PROMPT TO CLAUDE.md"
     open_path(prompt_file if prompt_file.exists() else session / "instructions")
+
+
+def run_gate0_deck(root: Path | str) -> None:
+    paths = ProjectPaths.from_root(root)
+    paths.ensure()
+    category = choose_category(paths)
+
+    step1 = latest_gap_workbook(paths, category)
+    step2 = latest_prd_ideation_workbook(paths, category)
+    step3 = latest_research_report(paths, category)
+
+    print("\nGate 0 deck will use the latest current-program outputs only:")
+    print(f"- Step 1: {step1 or 'not found'}")
+    print(f"- Step 2: {step2 or 'not found'}")
+    print(f"- Step 3: {step3 or 'not found; deck will use Step 1/2 evidence only'}")
+
+    if not prompt_yes_no("Build the Gate 0 leadership deck from these files?", default=True):
+        print("Cancelled.")
+        return
+
+    result = generate_gate0_deck(paths, category)
+    print(f"\nGate 0 deck output:\n{result.deck_path}")
+    print(f"\nBackend deck package:\n{result.package_dir}")
+    if result.spec_snapshot_dir:
+        print(f"\nMarkdown deck specs copied to:\n{result.spec_snapshot_dir}")
+    if result.warnings:
+        print("\nValidation notes:")
+        for warning in result.warnings:
+            print(f"- {warning}")
+    else:
+        print("\nValidation notes: source files parsed without warnings.")
+    open_path(result.deck_path)
