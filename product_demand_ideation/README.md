@@ -130,6 +130,8 @@ The Redshift refresh path is:
 local Amazon Redshift ODBC DSN -> pyodbc -> product_demand_ideation/experiments/<category>/exports/*_ecommerce_competitor_evidence_*.json
 ```
 
+Normal 1B runs refresh ecommerce snapshots through local Redshift ODBC when the newest snapshot is MCP-sourced or older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window. Codex MCP ecommerce fallback is off by default and should only be enabled for development with `PRODUCT_DEMAND_ALLOW_MCP_ECOMMERCE_FALLBACK=1`.
+
 When Redshift ecommerce PDP rows exist for the selected category, 1B uses them to lead the main `Recommendations` tab. Amazon-derived display rows stay in `Amazon Recommendations`.
 
 For light-producing categories, the model also normalizes luminaire performance:

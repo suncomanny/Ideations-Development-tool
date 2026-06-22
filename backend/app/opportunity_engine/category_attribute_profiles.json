@@ -3,7 +3,7 @@
     "notes": "Defaults used for integrated LED panel and troffer concepts when Step 1 evidence does not provide a stronger SKU-specific value.",
     "defaults": {
       "subcategory": "Panels",
-      "voltage": "120-277V target; validate against Step 1 listing and supplier file",
+      "voltage": "120-277V universal voltage target",
       "selectable_wattage": "TBD from Step 1 evidence and supplier options",
       "selectable_cct": "TBD from Step 1 evidence and supplier options",
       "cri": "80+ target",

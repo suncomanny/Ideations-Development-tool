@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from html import unescape
 from collections import defaultdict
@@ -416,6 +417,33 @@ def latest_ecommerce_snapshot(exports_dir: Path, category_slug: str) -> Path | N
     return snapshots[-1] if snapshots else None
 
 
+def _snapshot_age_hours(payload: dict[str, Any]) -> float | None:
+    generated_at = payload.get("generated_at")
+    if not generated_at:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - timestamp).total_seconds() / 3600
+
+
+def _is_odbc_snapshot(payload: dict[str, Any]) -> bool:
+    return str(payload.get("source_system") or "").lower().startswith("redshift_odbc")
+
+
+def _should_refresh_ecommerce_snapshot(payload: dict[str, Any]) -> bool:
+    if os.environ.get("PRODUCT_DEMAND_FORCE_ECOMMERCE_REFRESH", "").strip() == "1":
+        return True
+    if not _is_odbc_snapshot(payload):
+        return True
+    max_age_hours = float(os.environ.get("PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS") or 24)
+    age_hours = _snapshot_age_hours(payload)
+    return age_hours is None or age_hours > max_age_hours
+
+
 def write_ecommerce_snapshot(exports_dir: Path, category_slug: str, source_system: str, sql: str, rows: list[dict[str, Any]]) -> Path:
     exports_dir.mkdir(parents=True, exist_ok=True)
     generated_at = utc_now()
@@ -448,12 +476,16 @@ def refresh_ecommerce_snapshot_via_odbc(exports_dir: Path, category_slug: str, t
 
 def load_or_refresh_ecommerce_snapshot(exports_dir: Path, category_slug: str) -> tuple[dict[str, Any], Path]:
     path = latest_ecommerce_snapshot(exports_dir, category_slug)
-    if path is None:
+    payload = json.loads(path.read_text(encoding="utf-8")) if path else {}
+    if path is None or _should_refresh_ecommerce_snapshot(payload):
         try:
             path = refresh_ecommerce_snapshot_via_odbc(exports_dir, category_slug)
         except Exception:
+            allow_mcp_fallback = os.environ.get("PRODUCT_DEMAND_ALLOW_MCP_ECOMMERCE_FALLBACK", "").strip() == "1"
+            if not allow_mcp_fallback:
+                raise
             path = refresh_ecommerce_snapshot_via_mcp(exports_dir, category_slug)
-    payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     return payload, path
 
 
