@@ -38,10 +38,19 @@ def run_product_demand_step1b(root: Path | str) -> None:
     print("This is the isolated Step 1B shadow tool built from the existing Step 1 pipeline.")
     print("It reuses Step 1 category data, Stackline/Amazon evidence, Sunco coverage checks, workbook format, and Step 2 handoff.")
     print()
-    output, issues, metadata = generate_product_demand_step1b(root)
+    try:
+        output, issues, metadata = generate_product_demand_step1b(root)
+    except RuntimeError as exc:
+        print()
+        print("Run stopped:")
+        print(f"  {exc}")
+        raise SystemExit(1) from exc
     print()
     print("Step 1B output:")
     print(f"  {output}")
+    if metadata.get("step2_handoff"):
+        print("Step 2 handoff copy:")
+        print(f"  {metadata['step2_handoff']}")
     print()
     print("Run details:")
     print(f"  Category: {metadata['category']}")

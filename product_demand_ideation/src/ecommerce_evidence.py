@@ -11,10 +11,7 @@ from typing import Any
 
 from luminaire_performance import normalize_luminaire_performance
 from mcp_remote_client import McpRemoteClient
-from odbc_client import execute_odbc_sql
-
-
-REDSHIFT_ODBC_CONNECTION = "DSN=Redshift"
+from odbc_client import execute_odbc_sql, redshift_connection_string
 
 
 @dataclass(frozen=True)
@@ -445,7 +442,7 @@ def refresh_ecommerce_snapshot_via_mcp(exports_dir: Path, category_slug: str, ti
 
 def refresh_ecommerce_snapshot_via_odbc(exports_dir: Path, category_slug: str, timeout_seconds: int = 240) -> Path:
     sql = build_ecommerce_sql(category_slug)
-    rows = execute_odbc_sql(REDSHIFT_ODBC_CONNECTION, sql, timeout_seconds=timeout_seconds)
+    rows = execute_odbc_sql(redshift_connection_string(), sql, timeout_seconds=timeout_seconds)
     return write_ecommerce_snapshot(exports_dir, category_slug, "redshift_odbc_dsn_ecommerce_competitor_snapshot", sql, rows)
 
 

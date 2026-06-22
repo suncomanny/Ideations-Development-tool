@@ -33,6 +33,27 @@ Redshift ecommerce competitor evidence now prefers the local ODBC DSN:
 DSN=Redshift
 ```
 
+If the Windows DSN does not persist credentials, create this local-only file:
+
+```text
+C:\Users\<user>\.sunco_ideation_development\.env
+```
+
+Supported Redshift options:
+
+```text
+REDSHIFT_ODBC_DSN=Redshift
+REDSHIFT_USER=odbc_user
+REDSHIFT_PASSWORD=<password from data team>
+REDSHIFT_DATABASE=dev
+```
+
+Alternatively, use a full ODBC string:
+
+```text
+REDSHIFT_DSN=DSN=Redshift;UID=odbc_user;PWD=<password>;Database=dev
+```
+
 Codex MCP access is allowed as a development fallback, but it should not be the only way the tool can run. Sunco catalog coverage currently uses the saved local snapshot or Postgres MCP until a Postgres ODBC DSN, Redshift mirror, or other production connector is configured for the product/catalog tables.
 
 Sunco catalog coverage is designed to run from a local SQLite cache:

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ecommerce_evidence import build_ecommerce_sql
-from odbc_client import execute_odbc_sql
+from odbc_client import execute_odbc_sql, redshift_connection_string, sanitize_connection_error
 
 
 def _text(value: Any) -> str:
@@ -46,7 +46,7 @@ def audit_category_profiles(root: Path | str, limit: int = 12) -> Path:
             "error": "",
         }
         try:
-            evidence_rows = execute_odbc_sql("DSN=Redshift", build_ecommerce_sql(category.slug, limit=limit), timeout_seconds=90)
+            evidence_rows = execute_odbc_sql(redshift_connection_string(), build_ecommerce_sql(category.slug, limit=limit), timeout_seconds=90)
             domains = sorted({_text(row.get("domain")).lower() for row in evidence_rows if _text(row.get("domain"))})
             result["row_count"] = len(evidence_rows)
             result["observed_stock_decrease"] = sum(float(row.get("observed_stock_decrease") or 0) for row in evidence_rows)
@@ -57,7 +57,7 @@ def audit_category_profiles(root: Path | str, limit: int = 12) -> Path:
                 result["status"] = "empty"
         except Exception as exc:
             result["status"] = "error"
-            result["error"] = f"{type(exc).__name__}: {exc}"
+            result["error"] = f"{type(exc).__name__}: {sanitize_connection_error(exc)}"
         rows.append(result)
 
     with output.open("w", encoding="utf-8-sig", newline="") as handle:

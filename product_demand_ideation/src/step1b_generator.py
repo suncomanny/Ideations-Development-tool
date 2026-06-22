@@ -4,6 +4,8 @@ import re
 import hashlib
 import csv
 import mimetypes
+import os
+import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,7 +20,7 @@ from openpyxl import load_workbook
 
 from ecommerce_evidence import ecommerce_rows_to_step1_rows, is_grow_light_candidate, load_or_refresh_ecommerce_snapshot
 from luminaire_performance import is_luminaire_category, normalize_luminaire_performance, performance_note
-from odbc_client import execute_odbc_sql
+from odbc_client import execute_odbc_sql, redshift_connection_source, redshift_connection_string, sanitize_connection_error
 from product_demand_categories import choose_product_demand_category
 from sunco_catalog_coverage import catalog_coverage_analysis, load_catalog_context_from_cache_or_snapshot
 
@@ -697,9 +699,12 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
     if not sql:
         return [], "No Redshift Stackline segment mapping for this category."
     try:
-        items = execute_odbc_sql(REDSHIFT_ODBC_CONNECTION, sql, timeout_seconds=240)
+        items = execute_odbc_sql(redshift_connection_string(REDSHIFT_ODBC_CONNECTION), sql, timeout_seconds=240)
     except Exception as exc:
-        return [], f"Redshift Stackline query failed: {exc}"
+        return [], (
+            f"Redshift Stackline query failed through {redshift_connection_source(REDSHIFT_ODBC_CONNECTION)}: "
+            f"{sanitize_connection_error(exc)}"
+        )
     return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit, category_slug=category_slug), sql
 
 
@@ -917,7 +922,8 @@ def _apply_product_demand_overlay(
     else:
         output["product_demand_stackline_audit"] = redshift_stackline_audit
         output["product_demand_stackline_note"] = redshift_stackline_audit
-        if not inherited_amazon_rows:
+        allow_local_stackline_fallback = os.environ.get("PRODUCT_DEMAND_ALLOW_LOCAL_STACKLINE_CSV_FALLBACK", "").strip() == "1"
+        if allow_local_stackline_fallback and not inherited_amazon_rows:
             local_stackline_rows = _stackline_amazon_rows_from_csv(paths, category_slug, category_name)
             if local_stackline_rows:
                 output["amazon_rows"] = local_stackline_rows
@@ -926,6 +932,12 @@ def _apply_product_demand_overlay(
                     "Live Redshift Stackline Atlas returned no rows, so 1B used the local CSV fallback. "
                     "This should be treated as a diagnostic path only."
                 )
+        elif not inherited_amazon_rows:
+            output["product_demand_stackline_note"] = _append_note(
+                redshift_stackline_audit,
+                "No local CSV Stackline fallback was used. Normal Step 1B runs require Redshift/ODBC Stackline data "
+                "so PMs do not depend on manual Stackline uploads.",
+            )
     _apply_catalog_coverage_to_amazon_rows(output.get("amazon_rows", []), catalog_rows, category_slug)
     max_inventory_decrease = max((float(row.get("observed_stock_decrease") or 0) for row in inventory_rows), default=0.0)
     max_inventory_velocity = max(
@@ -1012,12 +1024,21 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
     with existing["_category_run_lock"](paths, category):
         data = existing["load_category_data"](paths, category)
         data = _apply_product_demand_overlay(paths, data, inventory_rows, catalog_rows, existing, category.slug, category.run_name)
+        if not data.get("amazon_rows"):
+            raise RuntimeError(
+                "Product Demand Step 1B stopped before writing a workbook because Amazon/Stackline rows are missing. "
+                "This would create an incomplete combined-model report. Fix the local Redshift ODBC/env config and rerun. "
+                f"Stackline note: {data.get('product_demand_stackline_note') or 'No Stackline note was returned.'}"
+            )
         line_review_context = existing["prepare_line_review_context"](paths, category)
         data["line_review_context"] = line_review_context
         template = existing["_template_path"](paths)
+        run_stamp = existing["timestamp"]()
         output_folder = root / "product_demand_ideation" / "experiments" / category.slug / "outputs"
         output_folder.mkdir(parents=True, exist_ok=True)
-        output = output_folder / f"{category.slug}_product_demand_step1b_{existing['timestamp']()}.xlsx"
+        output = output_folder / f"{category.slug}_product_demand_step1b_{run_stamp}.xlsx"
+        step2_handoff_folder = paths.gap_category_outputs(category.slug)
+        step2_handoff = step2_handoff_folder / f"{category.slug}_true_gaps_{run_stamp}_product_demand_step1b.xlsx"
         existing["ensure_template_copy"](template, output)
 
         workbook = load_workbook(output)
@@ -1037,9 +1058,10 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
             ("Project", "sunco-product-opportunity-engine / Product Demand Step 1B"),
             ("Category", category.run_name),
             ("Owner", category.owner),
-            ("Generated", existing["timestamp"]()),
+            ("Generated", run_stamp),
             ("Original Step 1 reused", "Yes - category data, Stackline/Amazon evidence, Sunco coverage checks, workbook writer, line review, and Step 2 contract are reused."),
-            ("Step 1B change", "Uses Redshift ecommerce competitor PDP evidence for the main Recommendations tab, keeps Amazon Recommendations Stackline-led, and saves to the isolated product_demand_ideation output folder."),
+            ("Step 1B change", "Uses Redshift ecommerce competitor PDP evidence for the main Recommendations tab, keeps Amazon Recommendations Stackline-led, saves to the isolated product_demand_ideation output folder, and publishes a clearly labeled Step 2 handoff copy."),
+            ("Step 2 handoff workbook", str(step2_handoff)),
             ("Weighting rule", f"Recommendations tab: {WEIGHT_PROFILES['source_rows']['description']}. Amazon Recommendations tab: {WEIGHT_PROFILES['amazon_rows']['description']}."),
             ("Luminaire performance rule", "For light-producing categories, compare lumens as the user-facing brightness target and wattage as the installer/load target. Prefer recommendations that meet a brightness tier at equal or lower wattage."),
             ("Ecommerce competitor source", inventory_source),
@@ -1062,8 +1084,12 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
         )
         workbook.save(output)
         workbook.close()
+        step2_handoff_folder.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(output, step2_handoff)
 
     issues = existing["validate_workbook"](output, ["Summary", "Recommendations", "Sources and Audit", "Amazon Recommendations", "Amazon Source Audit", "Run Audit"])
+    handoff_issues = existing["validate_workbook"](step2_handoff, ["Summary", "Recommendations", "Sources and Audit", "Amazon Recommendations", "Amazon Source Audit", "Run Audit"])
+    issues.extend(f"Step 2 handoff: {issue}" for issue in handoff_issues)
     ok, message = existing["try_excel_com_open_save"](output)
     if message:
         issues.append(message if not ok else message)
@@ -1076,5 +1102,6 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
         "catalog_source": catalog_source,
         "source_rows": len(data.get("source_rows", [])),
         "amazon_rows": len(data.get("amazon_rows", [])),
+        "step2_handoff": str(step2_handoff),
     }
     return output, issues, metadata
