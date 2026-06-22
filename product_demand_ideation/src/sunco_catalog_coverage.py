@@ -552,7 +552,7 @@ def catalog_coverage_note(candidate: dict[str, Any], catalog_rows: list[dict[str
     if not match or score < 50:
         return (
             "Active title match: 0 strong Sunco active-catalog exact-spec matches found from Postgres product/catalog snapshot. "
-            "Treat as likely Shopify assortment gap until Step 2 confirms with live PDP/listing review.",
+            "Treat as likely Shopify assortment gap based on current active-catalog coverage.",
             score,
         )
 
@@ -578,11 +578,11 @@ def catalog_coverage_note(candidate: dict[str, Any], catalog_rows: list[dict[str
     if is_limited_series:
         return (
             f"Limited-line Sunco coverage found ({score}/100 match): {match_label}. "
-            f"Status: {status}.{classification_context} NSL/limited-line coverage should not fully clear the assortment gap; validate whether a standard Sunco line needs this spec.",
+            f"Status: {status}.{classification_context} NSL/limited-line coverage does not fully clear the assortment gap; consider a standard Sunco line when demand evidence supports this spec.",
             score,
         )
     return (
         f"Partial Sunco active coverage found ({score}/100 match): {match_label}. "
-        f"Status: {status}.{classification_context} Validate whether the missing spec is size/output/CCT/feature depth before treating as a new SKU.",
+        f"Status: {status}.{classification_context} Treat as partial coverage; the missing spec appears to be size/output/CCT/feature depth rather than a fully covered active product.",
         score,
     )

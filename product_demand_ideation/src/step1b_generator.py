@@ -865,12 +865,12 @@ def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_r
         elif coverage_score >= 50:
             note = _append_note(
                 note,
-                "Amazon action: validate whether the miss is only PDP/listing depth or a real variant/spec gap.",
+                "Amazon action: treat as listing-depth or variant/spec-gap candidate based on the Sunco coverage note.",
             )
         else:
             note = _append_note(
                 note,
-                "Amazon action: likely launch/assortment candidate if Step 2 confirms no equivalent active Sunco offer.",
+                "Amazon action: likely launch/assortment candidate where Sunco active-catalog coverage shows no equivalent offer.",
             )
         if missing_features:
             note = _append_note(
@@ -918,8 +918,8 @@ def _apply_product_demand_overlay(
                 row["classification"] = "Existing Sunco coverage, but missing feature"
                 _set_recommendation_label(row, "Existing Sunco coverage, but missing feature", display_missing_features)
                 row["pm_action"] = (
-                    "Review as a feature opportunity, not a base SKU duplicate. "
-                    f"Compare whether Sunco should add, merchandise, or call out {', '.join(display_missing_features)} on the closest active family."
+                    f"Position {', '.join(display_missing_features)} as a feature opportunity on the matched active Sunco family. "
+                    "Use as an add-variant, running-change, or PDP merchandising callout path rather than a base SKU duplicate."
                 )
             elif coverage_score >= 75:
                 row["classification"] = "Product Revision or merchandising review"
@@ -927,8 +927,8 @@ def _apply_product_demand_overlay(
                 row["confidence"] = "Coverage exists"
                 _set_recommendation_label(row, "Product Revision or merchandising review")
                 row["pm_action"] = (
-                    "Do not treat as a new SKU unless PM review confirms a real missing variant. "
-                    "Use this competitor demand signal to review Sunco.com merchandising, PDP title/spec coverage, pack-size visibility, price position, search/category placement, or a product revision on the matched active SKU."
+                    "Prioritize PDP/category merchandising or product revision on the matched active SKU. "
+                    "Use the competitor demand signal to improve title/spec coverage, pack-size visibility, price position, search/category placement, or running-change planning."
                 )
             elif coverage_score >= 50:
                 if missing_features:
@@ -938,12 +938,16 @@ def _apply_product_demand_overlay(
                     row["classification"] = "New variant opportunity"
                     _set_recommendation_label(row, "New variant opportunity")
                 row["pm_action"] = (
-                    "Compare Sunco's partial active coverage against the competitor spec. "
-                    "If the miss is only listing quality or pack-size visibility, optimize Shopify merchandising; if the miss is size/output/CCT/feature depth, scope the missing variant."
+                    "Scope the missing variant or feature depth shown by this row. "
+                    "Route PDP/pack visibility findings to merchandising instead of new SKU setup."
                 )
             else:
                 row["classification"] = "New variant opportunity"
                 _set_recommendation_label(row, "New variant opportunity")
+                row["pm_action"] = (
+                    "Scope as a new variant around this normalized spec pattern. "
+                    "Use the coverage result and demand evidence in this row as the launch rationale."
+                )
         output["source_rows"] = ecommerce_source_rows
         output["source_exact_count"] = len(ecommerce_source_rows)
         output["source_from_amazon_count"] = 0

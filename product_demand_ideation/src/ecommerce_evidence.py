@@ -790,7 +790,7 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
                 "example": example_text,
                 "source_url": example.get("url"),
                 "review_url": example.get("url"),
-                "sunco_check": "Pending Sunco active-catalog exact-spec join; treat as ecommerce demand evidence until Step 2 confirms whether Sunco already has comparable active coverage.",
+                "sunco_check": "Sunco active-catalog exact-spec coverage will be applied by the Product Demand overlay before this row is published.",
                 "why_gap": (
                     f"Redshift ecommerce competitor evidence found {len(group_rows)} PDP listing(s) across {len(domains)} domain(s) "
                     f"and {len(brands)} brand(s) for this spec pattern. Observed stock decrease totals {decrease:g} units across "
@@ -798,8 +798,7 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
                     "This should lead the Shopify/front-end launch review before Amazon-only evidence."
                 ),
                 "pm_action": (
-                    "Compare the searched terms and normalized spec cluster against Sunco active families. If Sunco lacks comparable active "
-                    "Shopify coverage, scope the product/listing launch around the spec pattern rather than copying the competitor SKU one-for-one."
+                    "Scope as a new variant around this normalized spec pattern. Use the coverage result and demand evidence in this row as the launch rationale; do not copy the competitor SKU one-for-one."
                 ),
                 "source_systems": ["redshift:v_competitors_scrapping_latest", "redshift:v_competitors_inventory_daily"],
                 "image_url": example.get("image"),
