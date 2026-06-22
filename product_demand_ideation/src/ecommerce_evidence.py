@@ -513,13 +513,13 @@ def _feature_signals(text: str) -> tuple[str, ...]:
     raw = text.lower()
     features = []
     for label, terms in [
-        ("emergency backup", ("emergency", "battery backup", "90 minute")),
-        ("motion sensor", ("motion sensor", "occupancy sensor", "pir sensor", "microwave sensor")),
-        ("daylight harvesting", ("daylight harvesting", "daylight sensor", "ambient light sensor", "photocell")),
-        ("control ready", ("sensor ready", "control ready", "controls ready", "c-max", "control-ready")),
-        ("smart controls", ("bluetooth mesh", "wireless control", "smart control")),
-        ("0-10V dimming", ("0-10v",)),
-        ("TRIAC dimming", ("triac",)),
+        ("Emergency Backup", ("emergency", "battery backup", "90 minute")),
+        ("Motion Sensor", ("motion sensor", "occupancy sensor", "pir sensor", "microwave sensor")),
+        ("Daylight Harvesting", ("daylight harvesting", "daylight sensor", "ambient light sensor", "photocell")),
+        ("Control Ready", ("sensor ready", "control ready", "controls ready", "c-max", "control-ready")),
+        ("Smart Controls", ("bluetooth mesh", "wireless control", "smart control")),
+        ("0-10V Dimming", ("0-10v",)),
+        ("TRIAC Dimming", ("triac",)),
         ("dimmable", ("dimmable", "dimming")),
         ("wet/damp rated", ("wet rated", "damp rated", "ip65", "ip66")),
     ]:
@@ -598,6 +598,65 @@ def _movement_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _feature_search_terms(rows: list[dict[str, Any]]) -> tuple[str, ...]:
+    text = " ".join(
+        " ".join(_text(row.get(key)) for key in ["name", "description", "product_type", "category"])
+        for row in rows
+    )
+    return tuple(
+        feature
+        for feature in _feature_signals(text)
+        if feature not in {"dimmable", "wet/damp rated"}
+    )
+
+
+def _vendor_bias_risk(domains: list[str], brands: list[str]) -> str:
+    if len(domains) >= 2 and len(brands) >= 2:
+        return "Low"
+    if len(domains) >= 2 or len(brands) >= 2:
+        return "Medium"
+    return "High"
+
+
+def _spec_demand_confidence(
+    feature_terms: tuple[str, ...],
+    group_count: int,
+    domain_count: int,
+    brand_count: int,
+    decrease: float,
+    events: int,
+) -> str:
+    if decrease <= 0:
+        return "Low"
+    if feature_terms and domain_count >= 2 and brand_count >= 2 and events >= 3:
+        return "High"
+    if feature_terms and events >= 2 and (group_count >= 2 or domain_count >= 2 or brand_count >= 2):
+        return "Medium"
+    if domain_count >= 2 and events >= 3:
+        return "Medium"
+    return "Directional"
+
+
+def _spec_demand_note(
+    feature_terms: tuple[str, ...],
+    domains: list[str],
+    brands: list[str],
+    group_count: int,
+    decrease: float,
+    events: int,
+) -> str:
+    confidence = _spec_demand_confidence(feature_terms, group_count, len(domains), len(brands), decrease, events)
+    bias = _vendor_bias_risk(domains, brands)
+    search_terms = ", ".join(feature_terms) if feature_terms else "no distinct feature term isolated beyond the base spec pattern"
+    return (
+        f"Spec demand confidence: {confidence}. "
+        f"Searched/customer terms: {search_terms}. "
+        f"Vendor bias risk: {bias} ({len(domains)} competitor domain(s), {len(brands)} brand(s)). "
+        "This is a demand hypothesis: inventory movement shows the product/spec cluster is moving, "
+        "but it does not prove the feature alone caused the sales lift."
+    )
+
+
 def _movement_score(metrics: dict[str, Any]) -> float:
     decrease = _as_float(metrics.get("decrease"))
     events = _as_float(metrics.get("events"))
@@ -636,7 +695,7 @@ def _candidate_score(rows: list[dict[str, Any]]) -> float:
     feature_text = " ".join(
         " ".join(_feature_signals(" ".join(_text(row.get(key)) for key in ["name", "description", "product_type", "category"])))
         for row in rows
-    )
+    ).lower()
     technology_bonus = 12.0 if any(
         term in feature_text
         for term in ["emergency backup", "motion sensor", "daylight harvesting", "control ready", "smart controls"]
@@ -697,6 +756,8 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
         metrics = _movement_metrics(group_rows)
         decrease = _as_float(metrics.get("decrease"))
         events = _as_int(metrics.get("events"))
+        feature_terms = _feature_search_terms(group_rows)
+        spec_demand_note = _spec_demand_note(feature_terms, domains, brands, len(group_rows), decrease, events)
         observed_window = _as_int(metrics.get("observation_window_days"))
         decrease_window = _as_int(metrics.get("decrease_window_days"))
         weekly_velocity = max(
@@ -733,17 +794,22 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
                 "why_gap": (
                     f"Redshift ecommerce competitor evidence found {len(group_rows)} PDP listing(s) across {len(domains)} domain(s) "
                     f"and {len(brands)} brand(s) for this spec pattern. Observed stock decrease totals {decrease:g} units across "
-                    f"{events} decrease event(s).{velocity_note} This should lead the Shopify/front-end launch review before Amazon-only evidence."
+                    f"{events} decrease event(s).{velocity_note} {spec_demand_note} "
+                    "This should lead the Shopify/front-end launch review before Amazon-only evidence."
                 ),
                 "pm_action": (
-                    "Validate Sunco exact-spec coverage, pricing, and margin. If Sunco lacks comparable active Shopify coverage, "
-                    "scope the product/listing launch around the normalized spec pattern rather than copying the competitor SKU one-for-one."
+                    "Compare the searched terms and normalized spec cluster against Sunco active families. If Sunco lacks comparable active "
+                    "Shopify coverage, scope the product/listing launch around the spec pattern rather than copying the competitor SKU one-for-one."
                 ),
                 "source_systems": ["redshift:v_competitors_scrapping_latest", "redshift:v_competitors_inventory_daily"],
                 "image_url": example.get("image"),
                 "_ecommerce_score": score,
                 "_ecommerce_group_size": len(group_rows),
                 "_ecommerce_domains": domains,
+                "_ecommerce_brands": brands,
+                "_feature_search_terms": feature_terms,
+                "_spec_demand_confidence": _spec_demand_confidence(feature_terms, len(group_rows), len(domains), len(brands), decrease, events),
+                "_vendor_bias_risk": _vendor_bias_risk(domains, brands),
                 "_movement_metrics": metrics,
             }
         )

@@ -160,6 +160,50 @@ def _text(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+FEATURE_DISPLAY_NAMES = {
+    "emergency backup": "Emergency Backup",
+    "motion sensor": "Motion Sensor",
+    "daylight harvesting": "Daylight Harvesting",
+    "control ready": "Control Ready",
+    "smart controls": "Smart Controls",
+}
+
+
+def _display_feature(value: Any) -> str:
+    text = _text(value)
+    return FEATURE_DISPLAY_NAMES.get(text.lower(), text[:1].upper() + text[1:] if text else "")
+
+
+def _display_features(values: Any) -> list[str]:
+    if not values:
+        return []
+    return [_display_feature(value) for value in values if _display_feature(value)]
+
+
+def _recommendation_body(value: Any) -> str:
+    text = _text(value)
+    for marker in [
+        "Shopify ecommerce candidate:",
+        "Shopify technology gap candidate",
+        "Shopify partial-coverage technology gap",
+        "Merchandising/running-change candidate:",
+        "Possible feature gap:",
+        "Existing Sunco coverage, but missing feature:",
+        "Product Revision or merchandising review:",
+        "New variant opportunity:",
+    ]:
+        if text.lower().startswith(marker.lower()):
+            if ":" in text:
+                return text.split(":", 1)[1].strip()
+    return text
+
+
+def _set_recommendation_label(row: dict[str, Any], label: str, features: list[str] | None = None) -> None:
+    body = _recommendation_body(row.get("recommendation"))
+    feature_note = f" ({', '.join(features)})" if features else ""
+    row["recommendation"] = f"{label}{feature_note}: {body}" if body else f"{label}{feature_note}"
+
+
 def _tokens(value: str) -> set[str]:
     raw = re.findall(r"[a-z0-9]+", value.lower())
     ignored = {"led", "light", "lights", "fixture", "fixtures", "for", "and", "with", "the", "max"}
@@ -858,53 +902,48 @@ def _apply_product_demand_overlay(
             coverage = catalog_coverage_analysis(row, catalog_rows, category_slug)
             coverage_score = float(coverage.get("score") or 0)
             missing_features = coverage.get("missing_features") or []
+            display_missing_features = _display_features(missing_features)
             note = coverage.get("note") or ""
             if missing_features:
                 note = _append_note(
                     note,
-                    "Technology gap signal: competitor evidence includes "
-                    f"{', '.join(missing_features)} that was not found on the closest Sunco active-catalog match. "
-                    "Treat as feature-depth opportunity before treating as a base SKU duplicate.",
+                    "Feature gap signal: competitor evidence includes searched/customer term(s) "
+                    f"{', '.join(display_missing_features)} that were not found on the closest Sunco active-catalog match. "
+                    "Treat this as a feature hypothesis before treating it as a base SKU duplicate.",
                 )
             row["sunco_check"] = note
             row["_sunco_catalog_coverage_score"] = coverage_score
             row["_technology_gap_features"] = missing_features
             if coverage_score >= 75 and missing_features:
-                row["classification"] = "Ecommerce technology feature-gap candidate"
-                row["recommendation"] = row.get("recommendation", "").replace(
-                    "Shopify ecommerce candidate:",
-                    f"Shopify technology gap candidate ({', '.join(missing_features)}):",
-                    1,
-                )
+                row["classification"] = "Existing Sunco coverage, but missing feature"
+                _set_recommendation_label(row, "Existing Sunco coverage, but missing feature", display_missing_features)
                 row["pm_action"] = (
-                    "Review as a feature-depth opportunity, not a base SKU duplicate. "
-                    f"Validate whether Sunco should add or market {', '.join(missing_features)} on the closest active family."
+                    "Review as a feature opportunity, not a base SKU duplicate. "
+                    f"Compare whether Sunco should add, merchandise, or call out {', '.join(display_missing_features)} on the closest active family."
                 )
             elif coverage_score >= 75:
-                row["classification"] = "Merchandising / running-change review"
+                row["classification"] = "Product Revision or merchandising review"
                 row["priority"] = "Medium"
                 row["confidence"] = "Coverage exists"
-                row["recommendation"] = row.get("recommendation", "").replace(
-                    "Shopify ecommerce candidate:",
-                    "Merchandising/running-change candidate:",
-                    1,
-                )
+                _set_recommendation_label(row, "Product Revision or merchandising review")
                 row["pm_action"] = (
-                    "Do not treat as a new SKU until PM review confirms a real missing variant. "
-                    "Use this competitor demand signal to audit Sunco.com merchandising, PDP title/spec coverage, pack-size visibility, price position, search/category placement, or a running change on the matched active SKU."
+                    "Do not treat as a new SKU unless PM review confirms a real missing variant. "
+                    "Use this competitor demand signal to review Sunco.com merchandising, PDP title/spec coverage, pack-size visibility, price position, search/category placement, or a product revision on the matched active SKU."
                 )
             elif coverage_score >= 50:
                 if missing_features:
-                    row["classification"] = "Partial coverage with technology feature gap"
-                    row["recommendation"] = row.get("recommendation", "").replace(
-                        "Shopify ecommerce candidate:",
-                        f"Shopify partial-coverage technology gap ({', '.join(missing_features)}):",
-                        1,
-                    )
+                    row["classification"] = "Possible feature gap"
+                    _set_recommendation_label(row, "Possible feature gap", display_missing_features)
+                else:
+                    row["classification"] = "New variant opportunity"
+                    _set_recommendation_label(row, "New variant opportunity")
                 row["pm_action"] = (
-                    "Validate whether Sunco's partial active coverage fully matches the competitor spec. "
+                    "Compare Sunco's partial active coverage against the competitor spec. "
                     "If the miss is only listing quality or pack-size visibility, optimize Shopify merchandising; if the miss is size/output/CCT/feature depth, scope the missing variant."
                 )
+            else:
+                row["classification"] = "New variant opportunity"
+                _set_recommendation_label(row, "New variant opportunity")
         output["source_rows"] = ecommerce_source_rows
         output["source_exact_count"] = len(ecommerce_source_rows)
         output["source_from_amazon_count"] = 0
