@@ -52,8 +52,41 @@ LINE_REVIEW_CATEGORY_ALIASES = {
     "area_lights": ["area light", "area lights", "shoebox"],
     "canopy": ["canopy light", "canopy"],
     "string_lights": ["string light", "string lights"],
+    "linears": [
+        "linear high bay",
+        "linear high bays",
+        "linear pendant",
+        "linear pendant light",
+        "linear up/down",
+        "linear up down",
+        "recessed linear",
+        "recessed linear light",
+        "recessed linear lighting",
+        "suspension light",
+        "suspension lights",
+        "dl_4ln",
+        "pd_4ln",
+        "lnpd",
+    ],
     "commercial_grow_lights": ["commercial grow light", "grow light", "grow lights"],
     "residential_grow_lights": ["residential grow light", "grow light", "grow lights"],
+}
+
+LINE_REVIEW_CATEGORY_EXCLUDES = {
+    "linears": [
+        "battery backup",
+        "connector",
+        "emergency battery",
+        "led ready",
+        "lens cover",
+        "linear strip light",
+        "mount kit",
+        "motion sensor",
+        "sensor",
+        "strip light fixture",
+        "vapor tight",
+        "vaportight",
+    ],
 }
 
 
@@ -97,6 +130,15 @@ def _category_terms(category: Category) -> list[str]:
     }
     terms = []
     for value in values:
+        clean = re.sub(r"\s+", " ", str(value or "").strip().lower())
+        if clean and clean not in terms:
+            terms.append(clean)
+    return sorted(terms, key=lambda item: (len(item), item))
+
+
+def _category_exclude_terms(category: Category) -> list[str]:
+    terms = []
+    for value in LINE_REVIEW_CATEGORY_EXCLUDES.get(category.slug, []):
         clean = re.sub(r"\s+", " ", str(value or "").strip().lower())
         if clean and clean not in terms:
             terms.append(clean)
@@ -291,6 +333,9 @@ def build_line_review_sql(
     include_purchase_order_facts: bool = True,
 ) -> str:
     values = ",\n        ".join(f"({_sql_literal(term)})" for term in _category_terms(category))
+    exclude_terms = _category_exclude_terms(category)
+    exclude_values = _values_cte(exclude_terms)
+    exclude_note = ", ".join(exclude_terms) if exclude_terms else "none"
     decoder_prefixes = _decoder_prefixes(paths, category) if paths else []
     decoder_values = _values_cte(decoder_prefixes)
     decoder_note = ", ".join(decoder_prefixes) if decoder_prefixes else "none available"
@@ -338,6 +383,7 @@ po_facts AS (
     return f"""-- Existing SKU Line Review for {category.run_name}
 -- Source policy: Postgres only. Do not supplement this query with legacy local CSV/workbook exports.
 -- Window: trailing 365 days from CURRENT_DATE. Channels: Shopify=12585, Amazon US=11929.
+-- Category exclude terms applied: {exclude_note}
 -- SKU decoder product-type prefixes used for category matching: {decoder_note}
 -- Purchase order facts included: {str(include_purchase_order_facts).lower()}
 WITH params AS (
@@ -348,6 +394,9 @@ WITH params AS (
 category_terms(term) AS (
     VALUES
         {values}
+),
+exclude_terms(term) AS (
+    {exclude_values}
 ),
 decoder_prefixes(match_prefix) AS (
     {decoder_values}
@@ -425,6 +474,19 @@ product_base AS (
                     ) IN ('-', '_')
                 )
           )
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM exclude_terms e
+          WHERE e.term IS NOT NULL
+            AND lower(
+                COALESCE(pc.name, '') || ' ' ||
+                COALESCE(pc.sku, '') || ' ' ||
+                COALESCE(shp.product_type, '') || ' ' ||
+                COALESCE(shp.title, '') || ' ' ||
+                COALESCE(p.name, '') || ' ' ||
+                COALESCE(p.master_sku, '')
+            ) LIKE '%' || e.term || '%'
       )
 ),
 product_families AS (
