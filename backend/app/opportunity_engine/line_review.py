@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 
 from .categories import Category
 from .paths import ProjectPaths
+from .powerbi_classification import load_powerbi_classification_matches
 from .source_policy import classify_source, path_has_forbidden_reference, source_policy_text
 
 
@@ -339,6 +340,10 @@ def build_line_review_sql(
     decoder_prefixes = _decoder_prefixes(paths, category) if paths else []
     decoder_values = _values_cte(decoder_prefixes)
     decoder_note = ", ".join(decoder_prefixes) if decoder_prefixes else "none available"
+    powerbi_context = load_powerbi_classification_matches(paths, category) if paths else None
+    powerbi_family_values = _values_cte(powerbi_context.families if powerbi_context else [])
+    powerbi_sku_values = _values_cte(powerbi_context.skus if powerbi_context else [])
+    powerbi_note = powerbi_context.summary() if powerbi_context else "No ProjectPaths supplied."
     if include_purchase_order_facts:
         po_facts_cte = """
 ,
@@ -385,6 +390,7 @@ po_facts AS (
 -- Window: trailing 365 days from CURRENT_DATE. Channels: Shopify=12585, Amazon US=11929.
 -- Category exclude terms applied: {exclude_note}
 -- SKU decoder product-type prefixes used for category matching: {decoder_note}
+-- PowerBI Families category-designation support: {powerbi_note}
 -- Purchase order facts included: {str(include_purchase_order_facts).lower()}
 WITH params AS (
     SELECT
@@ -400,6 +406,12 @@ exclude_terms(term) AS (
 ),
 decoder_prefixes(match_prefix) AS (
     {decoder_values}
+),
+powerbi_families(family_part_number) AS (
+    {powerbi_family_values}
+),
+powerbi_skus(sku) AS (
+    {powerbi_sku_values}
 ),
 variant_by_product AS (
     SELECT DISTINCT ON (product_id) *
@@ -474,6 +486,14 @@ product_base AS (
                     ) IN ('-', '_')
                 )
           )
+          OR regexp_replace(
+              UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, ''))),
+              '-[0-9]+PK$',
+              '',
+              'i'
+          ) IN (SELECT family_part_number FROM powerbi_families)
+          OR UPPER(COALESCE(NULLIF(p.master_sku, ''), NULLIF(svp.sku, ''), NULLIF(svs.sku, '')))
+             IN (SELECT sku FROM powerbi_skus)
       )
       AND NOT EXISTS (
           SELECT 1

@@ -43,6 +43,34 @@ Use a filename containing the category slug, such as `panels_line_review_2026-05
 
 Step 1 writes the recommended Postgres query for each category to `backend/cache/ideation_data/<category_slug>/sql/line_review_postgres.sql`, and the SQL is included on `Run Audit`.
 
+Step 0 and Step 1 can also use the data-team `Sku's Classification.xlsx` workbook tab named `PowerBI Families` as the latest category-designation and PM ownership reference. Keep a current workbook export at:
+
+```text
+backend/source_data/sharepoint_exports/sku_classification/SkuClassification_PowerBIFamilies_latest.xlsx
+```
+
+Then refresh the local classification cache:
+
+```text
+Refresh Product Demand SKU Classification Cache.py
+```
+
+This creates:
+
+```text
+backend/source_data/sharepoint_exports/sku_classification/sku_classification.sqlite
+```
+
+The classification cache does not replace the tool's run-category list. It adds data-team SKU/family/category/owner designations as a matching source through `templates/powerbi_category_designation_map.csv`, so reporting names such as `Panel 2x4`, `Linear High Bay`, or `Downlight` can map cleanly into tool run categories such as `Panels` or `Linears` without changing the Step 1/2/3 workbook contracts.
+
+After refreshing the classification cache, refresh the run-category reference:
+
+```text
+Refresh Category Reference From PowerBI.py
+```
+
+This updates `templates/category_reference.csv` with the latest PowerBI-backed category owners, mapped PowerBI categories, and any newly mapped runnable categories. Categories that are useful opportunity areas but do not yet have current Sunco SKUs, such as `Chandeliers`, remain active with a note that no current PowerBI Families mapping exists.
+
 Step 2 and Step 3 use a clean handoff contract. Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct options such as bulb count, size, or form factor. It does not force a minimum row count. Step 3 then creates one final research workbook with one sheet per Step 2 row, so SKU-level permutations are researched separately without creating multiple workbooks.
 
 Step 2 can still carry notes and validation guidance, but Step 3 only scores concise customer-facing feature and certification signals. Non-applicable values, `TBD`, `N/A`, optional bulb guidance, and supplier-validation prose are ignored or converted into cleaner checks such as `E12 socket`, `E26 socket`, `ETL`, and `UL`.
@@ -132,6 +160,7 @@ Source ownership is intentionally split:
 
 - Redshift ODBC: ecommerce competitor movement, Stackline/Amazon evidence.
 - Postgres MCP: Sunco catalog coverage cache and Step 0 line-review snapshots.
+- SharePoint `PowerBI Families` export/cache: SKU family, reporting category, Series, and PM ownership designations used for category matching and catalog coverage enrichment.
 - Ignored local cache/export files: repeatable workbook runs without querying every source every time.
 
 ## Credentials

@@ -1,0 +1,64 @@
+tool_category_slug,powerbi_high_level_category,family_prefixes,sku_prefixes,active,notes
+area_lights,Area Light,,,yes,Use data-team PowerBI Families category as category designation support.
+bathroom_fans,Fan,,,yes,Use with caution because PowerBI does not split bathroom/residential/commercial fans.
+bulbs_plus_tubes,Bulb,,,yes,Use data-team PowerBI Families category as category designation support.
+canopy,Canopy,,,yes,Use data-team PowerBI Families category as category designation support.
+cans,Can,,,yes,Use data-team PowerBI Families category as category designation support.
+ceiling_fixtures,Ceiling fixtures,,,yes,Use data-team PowerBI Families category as category designation support.
+ceiling_fixtures,Ceiling Light,,,yes,Use data-team PowerBI Families category as category designation support.
+commercial_grow_lights,Grow Light,,,yes,Use with caution because PowerBI does not split commercial/residential grow lights.
+commercial_landscape,Bollard,,,yes,Outdoor landscape designation support from PowerBI.
+commercial_landscape,Step Light,,,yes,Outdoor landscape designation support from PowerBI.
+dimmers,Dimmer,,,yes,Use data-team PowerBI Families category as category designation support.
+dimmers,Dimmers,,,yes,Use data-team PowerBI Families category as category designation support.
+emergency,Emergency,,,yes,Use data-team PowerBI Families category as category designation support.
+emergency,Exit Light,,,yes,Exit signs/lights roll into the Emergency run category for this tool.
+flood_lights,Flood Lights,,,yes,Use data-team PowerBI Families category as category designation support.
+led_ready_fixtures,LED Ready Fixtures (indoor),,,yes,Use data-team PowerBI Families category as category designation support.
+lamps,Lamps,,,yes,Use data-team PowerBI Families category as category designation support.
+linears,Linear High Bay,,,yes,Use data-team PowerBI Families category as category designation support.
+linears,Downlight,DL_4LN,,yes,Recessed linear fixtures are classified as Downlight in PowerBI Families but reviewed under Linears in this tool.
+low_voltage_transformers,Power Pack,,,yes,Best available PowerBI designation support for low-voltage transformer/accessory products.
+outdoor_security,Outdoor Security,,,yes,Use data-team PowerBI Families category as category designation support.
+panels,Panel,,,yes,Use data-team PowerBI Families category as category designation support.
+panels,Panel 1x2,,,yes,Use data-team PowerBI Families category as category designation support.
+panels,Panel 1x4,,,yes,Use data-team PowerBI Families category as category designation support.
+panels,Panel 2x2,,,yes,Use data-team PowerBI Families category as category designation support.
+panels,Panel 2x4,,,yes,Use data-team PowerBI Families category as category designation support.
+pendants,Pendants,,,yes,Use data-team PowerBI Families category as category designation support.
+pendants,Pendant Light,,,yes,Use data-team PowerBI Families category as category designation support.
+residential_fans,Fan,,,yes,Use with caution because PowerBI does not split bathroom/residential/commercial fans.
+residential_grow_lights,Grow Light,,,yes,Use with caution because PowerBI does not split commercial/residential grow lights.
+residential_landscape,Garden,,,yes,Residential landscape designation support from PowerBI.
+residential_landscape,Post Light,,,yes,Residential landscape designation support from PowerBI.
+residential_landscape,Step Light,,,yes,Residential landscape designation support from PowerBI.
+residential_landscape,Well Lights,,,yes,Residential landscape designation support from PowerBI.
+residential_security,Indoor Security Light,,,yes,Use data-team PowerBI Families category as category designation support.
+sensors,Ceiling Sensor,,,yes,Use data-team PowerBI Families category as category designation support.
+sensors,Wall Sensor,,,yes,Use data-team PowerBI Families category as category designation support.
+shop_light,Shop Light,,,yes,Use data-team PowerBI Families category as category designation support.
+smart_lighting,Smart Lighting,,,yes,Use data-team PowerBI Families category as category designation support.
+goof_ring,Goof Ring,,,yes,Use data-team PowerBI Families category as category designation support.
+spot_light,Spot Light,,,yes,Use data-team PowerBI Families category as category designation support.
+striplights,Strip Lights,,,yes,Use data-team PowerBI Families category as category designation support.
+striplights,Striplights,,,yes,Use data-team PowerBI Families category as category designation support.
+trim,Trim,,,yes,Use data-team PowerBI Families category as category designation support.
+indoor_spotlight,Indoor Spotlight,,,yes,Use data-team PowerBI Families category as category designation support.
+track_light,Track Light,,,yes,Use data-team PowerBI Families category as category designation support.
+ufo,UFO,,,yes,Use data-team PowerBI Families category as category designation support.
+vanity,Vanity,,,yes,Use data-team PowerBI Families category as category designation support.
+vaportights,Vapor Tight,,,yes,Use data-team PowerBI Families category as category designation support.
+vaportights,Vaportights,,,yes,Use data-team PowerBI Families category as category designation support.
+wall_packs,Mini Wall Pack,,,yes,Use data-team PowerBI Families category as category designation support.
+wall_packs,Wall Packs,,,yes,Use data-team PowerBI Families category as category designation support.
+wall_sconces,Sconce,,,yes,Use data-team PowerBI Families category as category designation support.
+wall_sconces,Wall Sconces,,,yes,Use data-team PowerBI Families category as category designation support.
+well_lights,Well Lights,,,yes,Use data-team PowerBI Families category as category designation support.
+wire,Wires,,,yes,Use data-team PowerBI Families category as category designation support.
+wire_connectors,Connector,,,yes,Use data-team PowerBI Families category as category designation support.
+wire_connectors,Inlet,,,yes,Use data-team PowerBI Families category as category designation support.
+wire_connectors,Locking Inlet,,,yes,Use data-team PowerBI Families category as category designation support.
+wire_connectors,Locking Plug,,,yes,Use data-team PowerBI Families category as category designation support.
+wraparounds,4' Wraparound,,,yes,Use data-team PowerBI Families category as category designation support.
+wraparounds,Shop Light Wraparound (Phasing Out),,,yes,Use data-team PowerBI Families category as category designation support.
+wraparounds,Wraparounds,,,yes,Use data-team PowerBI Families category as category designation support.

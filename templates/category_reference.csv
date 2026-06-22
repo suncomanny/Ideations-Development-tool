@@ -1,48 +1,55 @@
-owner,category,run_name,active,notes
-Stephanie,UFO,UFO,yes,Leaf category from product ownership list.
-Stephanie,Linears,Linears,yes,Leaf category from product ownership list.
-Stephanie,Slims,Slims,yes,Leaf category from product ownership list.
-Stephanie,Retros,Retros,yes,Leaf category from product ownership list.
-Stephanie,Cans,Cans,yes,Leaf category from product ownership list.
-Stephanie,Rough ins,Rough ins,yes,Leaf category from product ownership list.
-Stephanie,Commercial grow lights,Commercial grow lights,yes,Renamed from Grow lights > Commercial to avoid ambiguity.
-Stephanie,Residential grow lights,Residential grow lights,yes,Renamed from Grow lights > Residential to avoid ambiguity.
-Jesse,Bulbs + Tubes,Bulbs + Tubes,yes,Use as one category exactly as written.
-Jesse,LED ready fixtures,LED ready fixtures,yes,Leaf category from product ownership list.
-Jesse,Wall packs,Wall packs,yes,Leaf category from product ownership list.
-Jesse,Flood lights,Flood lights,yes,Leaf category from product ownership list.
-Jesse,Commercial Landscape,Commercial Landscape,yes,Leaf category from product ownership list.
-Jesse,Outdoor security,Outdoor security,yes,Leaf category from product ownership list.
-Jesse,Area lights,Area lights,yes,Leaf category from product ownership list.
-Jesse,Canopy,Canopy,yes,Leaf category from product ownership list.
-Jesse,Sport lights,Sport lights,yes,Leaf category from product ownership list.
-Jesse,Commercial security,Commercial security,yes,Leaf category from product ownership list.
-Jesse,Solar,Solar,yes,Leaf category from product ownership list.
-Jesse,Residential Security,Residential Security,yes,Leaf category from product ownership list.
-Jesse,Residential landscape,Residential landscape,yes,Leaf category from product ownership list.
-Jesse,String lights,String lights,yes,Leaf category from product ownership list.
-Jesse,Outdoor ceiling,Outdoor ceiling,yes,Leaf category from product ownership list.
-Jesse,Well lights,Well lights,yes,Leaf category from product ownership list.
-Jesse,Wire,Wire,yes,Leaf category from product ownership list.
-Jesse,Low voltage transformers,Low voltage transformers,yes,Leaf category from product ownership list.
-Jesse,Wire connectors,Wire connectors,yes,Leaf category from product ownership list.
-Jesse,Sensors,Sensors,yes,Leaf category from product ownership list.
-Jesse,Dimmers,Dimmers,yes,Leaf category from product ownership list.
-Jesse,Bathroom Fans,Bathroom Fans,yes,Keep in scope even though this is electrical/HVAC-adjacent.
-Jesse,Residential Fans,Residential Fans,yes,Keep in scope even though this is electrical/HVAC-adjacent.
-Jesse,Commercial Fans,Commercial Fans,yes,Keep in scope even though this is electrical/HVAC-adjacent.
-Manny,Panels,Panels,yes,Leaf category from product ownership list.
-Manny,Emergency,Emergency,yes,Leaf category from product ownership list.
-Manny,Striplights,Striplights,yes,Leaf category from product ownership list.
-Manny,Vaportights,Vaportights,yes,Leaf category from product ownership list.
-Manny,Wraparounds,Wraparounds,yes,Leaf category from product ownership list.
-Manny,Explosion proof,Explosion proof,yes,Leaf category from product ownership list.
-Manny,Clean room lighting,Clean room lighting,yes,Leaf category from product ownership list.
-Manny,Ceiling fixtures,Ceiling fixtures,yes,Leaf category from product ownership list.
-Manny,Lamps,Lamps,yes,Leaf category from product ownership list.
-Manny,Chandeliers,Chandeliers,yes,Leaf category from product ownership list.
-Manny,Pendants,Pendants,yes,Leaf category from product ownership list.
-Manny,Wall Sconces,Wall Sconces,yes,Leaf category from product ownership list.
-Manny,Vanity,Vanity,yes,Leaf category from product ownership list.
-Manny,Under cabinet,Under cabinet,yes,Leaf category from product ownership list.
-Manny,Tape/rope light,Tape/rope light,yes,Leaf category from product ownership list.
+owner,category,run_name,active,powerbi_categories,notes
+Stephanie,UFO,UFO,yes,UFO,PowerBI Families mapped categories: UFO. Owner from nonblank PM Responsible rows: Stephanie=137. Matched rows=160.
+Stephanie,Linears,Linears,yes,Linear High Bay; Downlight,"PowerBI Families mapped categories: Linear High Bay, Downlight. Owner from nonblank PM Responsible rows: Stephanie=22. Matched rows=22."
+Stephanie,Slims,Slims,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Stephanie,Retros,Retros,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Stephanie,Cans,Cans,yes,Can,PowerBI Families mapped categories: Can. Owner from nonblank PM Responsible rows: Stephanie=29. Matched rows=29.
+Stephanie,Rough ins,Rough ins,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Stephanie,Commercial grow lights,Commercial grow lights,yes,Grow Light,PowerBI Families mapped categories: Grow Light. Owner from nonblank PM Responsible rows: Stephanie=23. Matched rows=25.
+Stephanie,Residential grow lights,Residential grow lights,yes,Grow Light,PowerBI Families mapped categories: Grow Light. Owner from nonblank PM Responsible rows: Stephanie=23. Matched rows=25.
+Jesse Harper,Bulbs + Tubes,Bulbs + Tubes,yes,Bulb,PowerBI Families mapped categories: Bulb. Owner from nonblank PM Responsible rows: Jesse Harper=1009. Matched rows=1020.
+Jesse Harper,LED ready fixtures,LED ready fixtures,yes,LED Ready Fixtures (indoor),PowerBI Families mapped categories: LED Ready Fixtures (indoor). Owner from nonblank PM Responsible rows: Jesse Harper=15. Matched rows=15.
+Jesse Harper,Wall packs,Wall packs,yes,Mini Wall Pack; Wall Packs,"PowerBI Families mapped categories: Mini Wall Pack, Wall Packs. Owner from nonblank PM Responsible rows: Jesse Harper=31. Matched rows=50."
+Jesse Harper,Flood lights,Flood lights,yes,Flood Lights,PowerBI Families mapped categories: Flood Lights. Owner from nonblank PM Responsible rows: Jesse Harper=1. Matched rows=5.
+Jesse Harper,Commercial Landscape,Commercial Landscape,yes,Bollard; Step Light,"PowerBI Families mapped categories: Bollard, Step Light. Owner from nonblank PM Responsible rows: Jesse Harper=7. Matched rows=8."
+Jesse Harper,Outdoor security,Outdoor security,yes,Outdoor Security,PowerBI Families mapped categories: Outdoor Security. Owner from nonblank PM Responsible rows: Jesse Harper=2. Matched rows=2.
+Jesse Harper,Area lights,Area lights,yes,Area Light,PowerBI Families mapped categories: Area Light. Owner from nonblank PM Responsible rows: Jesse Harper=12. Matched rows=24.
+Jesse Harper,Canopy,Canopy,yes,Canopy,PowerBI Families mapped categories: Canopy. Owner from nonblank PM Responsible rows: Jesse Harper=8. Matched rows=19.
+Jesse Harper,Sport lights,Sport lights,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Jesse Harper,Commercial security,Commercial security,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Jesse Harper,Solar,Solar,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Manny Hernandez,Residential Security,Residential Security,yes,Indoor Security Light,PowerBI Families mapped categories: Indoor Security Light. Owner from nonblank PM Responsible rows: Manny Hernandez=10. Matched rows=10.
+Jesse Harper,Residential landscape,Residential landscape,yes,Garden; Post Light; Step Light; Well Lights,"PowerBI Families mapped categories: Garden, Post Light, Step Light, Well Lights. Owner from nonblank PM Responsible rows: Jesse Harper=44. Matched rows=44."
+Jesse Harper,String lights,String lights,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Jesse Harper,Outdoor ceiling,Outdoor ceiling,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Jesse Harper,Well lights,Well lights,yes,Well Lights,PowerBI Families mapped categories: Well Lights. Owner from nonblank PM Responsible rows: Jesse Harper=2. Matched rows=2.
+Jesse Harper,Wire,Wire,yes,Wires,PowerBI Families mapped categories: Wires. No nonblank PM Responsible rows in current PowerBI data; retained prior owner pending Data Team assignment. Matched rows=3.
+Jesse Harper,Low voltage transformers,Low voltage transformers,yes,Power Pack,PowerBI Families mapped categories: Power Pack. No nonblank PM Responsible rows in current PowerBI data; retained prior owner pending Data Team assignment. Matched rows=1.
+Jesse Harper,Wire connectors,Wire connectors,yes,Connector; Inlet; Locking Inlet; Locking Plug,"PowerBI Families mapped categories: Connector, Inlet, Locking Inlet, Locking Plug. No nonblank PM Responsible rows in current PowerBI data; retained prior owner pending Data Team assignment. Matched rows=12."
+Jesse Harper,Sensors,Sensors,yes,Ceiling Sensor; Wall Sensor,"PowerBI Families mapped categories: Ceiling Sensor, Wall Sensor. No nonblank PM Responsible rows in current PowerBI data; retained prior owner pending Data Team assignment. Matched rows=7."
+Jesse Harper,Dimmers,Dimmers,yes,Dimmer; Dimmers,"PowerBI Families mapped categories: Dimmer, Dimmers. No nonblank PM Responsible rows in current PowerBI data; retained prior owner pending Data Team assignment. Matched rows=4."
+Jesse Harper,Bathroom Fans,Bathroom Fans,yes,Fan,PowerBI Families mapped categories: Fan. No nonblank PM Responsible rows in current PowerBI data; retained prior owner pending Data Team assignment. Matched rows=8.
+Jesse Harper,Residential Fans,Residential Fans,yes,Fan,PowerBI Families mapped categories: Fan. No nonblank PM Responsible rows in current PowerBI data; retained prior owner pending Data Team assignment. Matched rows=8.
+Jesse Harper,Commercial Fans,Commercial Fans,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Manny Hernandez,Panels,Panels,yes,Panel; Panel 1x2; Panel 1x4; Panel 2x2; Panel 2x4,"PowerBI Families mapped categories: Panel, Panel 1x2, Panel 1x4, Panel 2x2, Panel 2x4. Owner from nonblank PM Responsible rows: Manny Hernandez=130. Matched rows=145."
+Manny Hernandez,Emergency,Emergency,yes,Emergency; Exit Light,"PowerBI Families mapped categories: Emergency, Exit Light. Owner from nonblank PM Responsible rows: Manny Hernandez=56. Matched rows=58."
+Manny Hernandez,Striplights,Striplights,yes,Strip Lights; Striplights,"PowerBI Families mapped categories: Strip Lights, Striplights. Owner from nonblank PM Responsible rows: Manny Hernandez=15. Matched rows=15."
+Manny Hernandez,Vaportights,Vaportights,yes,Vapor Tight; Vaportights,"PowerBI Families mapped categories: Vapor Tight, Vaportights. Owner from nonblank PM Responsible rows: Manny Hernandez=8. Matched rows=17."
+Manny Hernandez,Wraparounds,Wraparounds,yes,4' Wraparound; Shop Light Wraparound (Phasing Out); Wraparounds,"PowerBI Families mapped categories: 4' Wraparound, Shop Light Wraparound (Phasing Out), Wraparounds. Owner from nonblank PM Responsible rows: Manny Hernandez=15. Matched rows=15."
+Manny Hernandez,Explosion proof,Explosion proof,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Manny Hernandez,Clean room lighting,Clean room lighting,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Manny Hernandez,Ceiling fixtures,Ceiling fixtures,yes,Ceiling fixtures; Ceiling Light,"PowerBI Families mapped categories: Ceiling fixtures, Ceiling Light. Owner from nonblank PM Responsible rows: Manny Hernandez=46. Matched rows=69."
+Manny Hernandez,Lamps,Lamps,yes,Lamps,PowerBI Families mapped categories: Lamps. Owner from nonblank PM Responsible rows: Manny Hernandez=2. Matched rows=2.
+Manny Hernandez,Chandeliers,Chandeliers,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Manny Hernandez,Pendants,Pendants,yes,Pendants; Pendant Light,"PowerBI Families mapped categories: Pendants, Pendant Light. Owner from nonblank PM Responsible rows: Manny Hernandez=8. Matched rows=24."
+Manny Hernandez,Wall Sconces,Wall Sconces,yes,Sconce; Wall Sconces,"PowerBI Families mapped categories: Sconce, Wall Sconces. Owner from nonblank PM Responsible rows: Manny Hernandez=5. Matched rows=39."
+Manny Hernandez,Vanity,Vanity,yes,Vanity,PowerBI Families mapped categories: Vanity. Owner from nonblank PM Responsible rows: Manny Hernandez=12. Matched rows=26.
+Manny Hernandez,Under cabinet,Under cabinet,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Manny Hernandez,Tape/rope light,Tape/rope light,yes,,No current PowerBI Families mapping configured; retained active category pending Data Team category assignment.
+Stephanie,Goof Ring,Goof Ring,yes,Goof Ring,PowerBI Families mapped categories: Goof Ring. Owner from nonblank PM Responsible rows: Stephanie=17. Matched rows=17.
+Manny Hernandez,Indoor Spotlight,Indoor Spotlight,yes,Indoor Spotlight,PowerBI Families mapped categories: Indoor Spotlight. Owner from nonblank PM Responsible rows: Manny Hernandez=2. Matched rows=2.
+Manny Hernandez,Shop Light,Shop Light,yes,Shop Light,PowerBI Families mapped categories: Shop Light. Owner from nonblank PM Responsible rows: Manny Hernandez=84. Matched rows=84.
+Manny Hernandez,Smart Lighting,Smart Lighting,yes,Smart Lighting,PowerBI Families mapped categories: Smart Lighting. Owner from nonblank PM Responsible rows: Manny Hernandez=41. Matched rows=41.
+Manny Hernandez,Spot Light,Spot Light,yes,Spot Light,PowerBI Families mapped categories: Spot Light. Owner from nonblank PM Responsible rows: Manny Hernandez=9. Matched rows=9.
+Manny Hernandez,Track Light,Track Light,yes,Track Light,PowerBI Families mapped categories: Track Light. Owner from nonblank PM Responsible rows: Manny Hernandez=1. Matched rows=1.
+Stephanie,Trim,Trim,yes,Trim,PowerBI Families mapped categories: Trim. Owner from nonblank PM Responsible rows: Stephanie=5. Matched rows=5.

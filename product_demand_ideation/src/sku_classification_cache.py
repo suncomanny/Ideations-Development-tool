@@ -13,6 +13,8 @@ SHEET_NAME = "PowerBI Families"
 
 CLASSIFICATION_COLUMNS = [
     "sku",
+    "pack_size",
+    "parent_sku",
     "family",
     "category",
     "pm_responsible",
@@ -26,10 +28,20 @@ def utc_now() -> str:
 
 
 def classification_cache_path(root: Path) -> Path:
-    return root / "product_demand_ideation" / "cache" / "sku_classification.sqlite"
+    return root / "backend" / "source_data" / "sharepoint_exports" / "sku_classification" / "sku_classification.sqlite"
 
 
 def default_classification_workbook_path(root: Path) -> Path:
+    backend_copy = (
+        root
+        / "backend"
+        / "source_data"
+        / "sharepoint_exports"
+        / "sku_classification"
+        / "SkuClassification_PowerBIFamilies_latest.xlsx"
+    )
+    if backend_copy.exists():
+        return backend_copy
     return root / "product_demand_ideation" / "source_workbooks" / "Sku's Classification.xlsx"
 
 
@@ -55,6 +67,8 @@ def _family_from_sku(value: str) -> str:
 def _find_header_row(sheet: Any) -> tuple[int, dict[str, int]]:
     aliases = {
         "sku": {"sku", "mastersku", "master sku", "master_sku"},
+        "pack_size": {"packsize", "pack size", "pack_size"},
+        "parent_sku": {"parentsku", "parent sku", "parent_sku"},
         "family": {"family", "skufamily", "sku family"},
         "category": {"category", "categoryname", "assignedcategory", "pbi category", "powerbicategory", "high level category", "highlevelcategory"},
         "pm_responsible": {"pm", "pmresponsible", "productmanager", "owner", "categorypm"},
@@ -99,6 +113,8 @@ def _extract_rows(workbook_path: Path) -> list[dict[str, Any]]:
             rows.append(
                 {
                     "sku": sku,
+                    "pack_size": _row_value(row, header_map, "pack_size"),
+                    "parent_sku": _normalized_sku(_row_value(row, header_map, "parent_sku")),
                     "family": _normalized_sku(family),
                     "category": _row_value(row, header_map, "category"),
                     "pm_responsible": _row_value(row, header_map, "pm_responsible"),

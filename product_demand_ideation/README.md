@@ -73,16 +73,30 @@ Normal `1B` workbook runs read from that local cache. If the cache does not exis
 The SharePoint workbook `Sku's Classification.xlsx` / `PowerBI Families` can also be cached locally for the latest PM/category/Series ownership layer:
 
 ```text
-product_demand_ideation/cache/sku_classification.sqlite
+backend/source_data/sharepoint_exports/sku_classification/sku_classification.sqlite
 ```
 
-Refresh it from a locally synced/exported copy of the current SharePoint workbook:
+Place the latest SharePoint export here:
 
 ```text
-Refresh Product Demand SKU Classification Cache.py "C:\path\to\Sku's Classification.xlsx"
+backend/source_data/sharepoint_exports/sku_classification/SkuClassification_PowerBIFamilies_latest.xlsx
 ```
 
-This cache is optional at runtime. When present, 1B enriches Sunco active-catalog coverage checks with PowerBI category, PM responsible, and Series. Treat the newest SharePoint workbook as the source of truth because other PMs may update it after local PM cleanup work.
+Then refresh it:
+
+```text
+Refresh Product Demand SKU Classification Cache.py
+```
+
+You can still pass an explicit workbook path if you are testing a temporary export. This cache is optional at runtime. When present, 1B enriches Sunco active-catalog coverage checks with PowerBI category, PM responsible, and Series. Step 0 also uses the cache through `templates/powerbi_category_designation_map.csv` to align generated line-review queries with the same reporting categories.
+
+After the classification cache refresh, update the shared run-category reference:
+
+```text
+Refresh Category Reference From PowerBI.py
+```
+
+Treat the newest SharePoint workbook as the source of truth because other PMs may update it after local PM cleanup work.
 
 Category profiles can be checked without generating workbooks:
 
