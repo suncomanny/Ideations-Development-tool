@@ -81,6 +81,62 @@ COLUMN_MAP = {
 }
 
 
+PRD_SPEC_COLUMNS = set(COLUMN_MAP) - {"research_notes"}
+
+
+def _clean_prd_requirement_text(key: str, value: Any) -> Any:
+    if key not in PRD_SPEC_COLUMNS or not isinstance(value, str):
+        return value
+    replacements = {
+        "; validate against Step 1 listing and supplier file": "",
+        "; validate listing claim": "",
+        "; validate exact listing claim": "",
+        "; validate against supplier warranty and Sunco category standard": "",
+        "; validate battery warranty separately": "; separate battery coverage recommended",
+        "TBD from Step 1 evidence and supplier options": "Target from Step 1 evidence",
+        "TBD from Step 1 evidence and supplier file": "Target from Step 1 evidence",
+        "TBD from supplier file": "target",
+        "TBD by supplier": "Target",
+        "supplier options": "design options",
+        "supplier research": "product definition",
+        "supplier and live market refresh": "market evidence",
+        "supplier and certification file": "certification requirement",
+        "supplier quotes": "quote refresh",
+        "Validate against live pricing before launch.": "Use live pricing before launch.",
+        "validate demand before adding complexity": "use demand evidence before adding complexity",
+        "validate total fixture output": "define total fixture output",
+        "validate if integrated LED": "use integrated LED requirement when applicable",
+        "validate by design size and design options": "select by design size",
+        "validate by design size and supplier options": "select by design size",
+    }
+    text = value
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    if key == "voltage":
+        text = re.sub(r"\b(\d{2,3}\s*-\s*\d{2,3})(?!\s*[Vv])\b", r"\1V", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def _clean_research_note_text(value: str) -> str:
+    replacements = {
+        "validate final": "confirm final",
+        "validate category fit": "confirm category fit",
+        "validate battery capacity": "confirm battery capacity",
+        "validate against supplier files": "confirm against source documents",
+        "supplier files": "source documents",
+        "supplier file": "source document",
+        "before PRD lock": "before RFQ release",
+        "Filled fields to validate": "Assumption-backed fields",
+        "must be validated before Step 2": "needs confirmation before Step 2",
+    }
+    text = value
+    for old, new in replacements.items():
+        text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)
+    text = re.sub(r"\bvalidated\b", "confirmed", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bvalidate\b", "confirm", text, flags=re.IGNORECASE)
+    return text
+
+
 def _template_path(paths: ProjectPaths) -> Path:
     template = paths.templates / "PRD_Research_Ideation_Template.xlsx"
     if template.exists():
@@ -402,7 +458,7 @@ def _infer_integrated_mounting(text: str, default: str | None = None) -> str:
         return "Recessed grid / troffer"
     if "flat panel" in lowered or "panel" in lowered:
         return "Commercial ceiling panel mount"
-    return default or "Mounting type TBD from Step 1 evidence and supplier file"
+    return default or "Mounting type by selected product form factor"
 
 
 def _infer_integrated_form_factor(item: dict[str, Any], text: str) -> str:
@@ -441,14 +497,14 @@ def _apply_integrated_led_enrichment(enriched: dict[str, Any], category: Categor
     enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
     enriched["bulb_base_type"] = None
     enriched["bulb_shape"] = None
-    enriched["wattage_primary"] = _extract_wattage_text(text) or enriched.get("wattage_primary") or "Integrated LED wattage TBD from supplier file"
+    enriched["wattage_primary"] = _extract_wattage_text(text) or enriched.get("wattage_primary") or "Integrated LED wattage target"
     enriched["wattage_max"] = enriched.get("wattage_max") or enriched["wattage_primary"]
-    enriched["cct_primary"] = cct_primary or enriched.get("cct_primary") or "CCT TBD from Step 1 evidence and supplier file"
+    enriched["cct_primary"] = cct_primary or enriched.get("cct_primary") or "CCT target"
     enriched["cct_max"] = cct_max or enriched.get("cct_max")
-    enriched["lumens_target"] = _extract_lumens_text(text) or enriched.get("lumens_target") or "Lumen output TBD from Step 1 evidence and supplier file"
-    enriched["efficiency"] = enriched.get("efficiency") or "Validate lm/W from final wattage and lumen target"
+    enriched["lumens_target"] = _extract_lumens_text(text) or enriched.get("lumens_target") or "Lumen output target"
+    enriched["efficiency"] = enriched.get("efficiency") or "Target lm/W derived from final wattage and lumen target"
     enriched["power_factor"] = enriched.get("power_factor") or ">=0.9 target for commercial integrated LED driver"
-    enriched["operating_temperature"] = enriched.get("operating_temperature") or "Commercial indoor ambient; supplier rating TBD"
+    enriched["operating_temperature"] = enriched.get("operating_temperature") or "Commercial indoor ambient operating range"
     if "triac" in lowered:
         enriched["dimming_type"] = "TRIAC dimming"
     elif "0-10v" in lowered or "0-10 v" in lowered:
@@ -624,10 +680,10 @@ def _market_msrp_target(item: dict[str, Any], market_samples: list[dict[str, Any
         "target": target,
         "text": (
             f"{_format_money(target)} market MSRP target; based on p50-p55 of {pricing_basis} "
-            f"({_format_money(p50)}-{_format_money(p55)}). Validate against live pricing before launch."
+            f"({_format_money(p50)}-{_format_money(p55)}). Use live pricing before launch."
         ),
         "vendor_cost_text": (
-            f"Backsolve from AQ MSRP target {_format_money(target)} after supplier quotes; "
+            f"Backsolve from AQ MSRP target {_format_money(target)} after quote refresh; "
             "do not use margin targets as the initial MSRP anchor."
         ),
         "notes": f"Market MSRP pricing basis: {pricing_basis}. Samples: " + "; ".join(sample_labels),
@@ -697,7 +753,7 @@ def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[
             )
             candidate["_field_overrides"] = {
                 "size_form_factor": f"{pack_count}-pack under-cabinet kit",
-                "research_notes": f"Pack-count target: {pack_count}-pack; validate battery capacity, mounting accessories, and Amazon pack economics.",
+                "research_notes": f"Pack-count target: {pack_count}-pack; confirm battery capacity, mounting accessories, and Amazon pack economics.",
             }
             candidates.append(candidate)
         return candidates
@@ -715,7 +771,7 @@ def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[
         candidate["name"] = _candidate_name(base_name, label)
         candidate["_parent_opportunity"] = base_name
         candidate["_target_light_count"] = light_count
-        candidate["_target_size"] = size or "TBD from supplier and live market refresh"
+        candidate["_target_size"] = size or "market-evidence size target"
         candidate["_sku_candidate_rationale"] = (
             "Split from the parent opportunity because Step 1 evidence or PM action named this as a "
             "distinct SKU-level option. Step 3 should research this row as one candidate SKU, not as a broad family."
@@ -731,7 +787,7 @@ def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[
 
 def _url_validation_summary(cache: dict[str, dict[str, Any]]) -> str:
     if not cache:
-        return "No review URLs found to validate."
+        return "No review URLs found for review."
     counts: dict[str, int] = {}
     flagged: list[str] = []
     for result in cache.values():
@@ -763,9 +819,9 @@ def _build_research_notes(
         f"Sunco check: {item.get('sunco_check')}",
         f"Recommended action: {item.get('action')}",
         f"Review link: {item.get('url')}",
-        f"Link validation: {link_validation}" if link_validation else None,
+        f"Review link check: {link_validation}" if link_validation else None,
         "Attribute enrichment: fields were filled from Step 1 evidence first, then category-profile defaults when safe.",
-        "Confidence note: validate final electrical specs, certifications, packaging, and claims against supplier files before PRD lock.",
+        "Confidence note: final electrical specs, certifications, packaging, and claims should be source-confirmed before RFQ release.",
     ]
     if profile.get("notes"):
         notes.append(f"Profile note: {profile.get('notes')}")
@@ -786,8 +842,8 @@ def _build_research_notes(
         if enriched.get(key)
     ]
     if assumed:
-        notes.append("Filled fields to validate: " + ", ".join(assumed))
-    return "\n".join(part for part in notes if part and not str(part).endswith("None"))
+        notes.append("Assumption-backed fields: " + ", ".join(assumed))
+    return _clean_research_note_text("\n".join(part for part in notes if part and not str(part).endswith("None")))
 
 
 def _enrich_item(
@@ -820,21 +876,21 @@ def _enrich_item(
         enriched["mounting_type"] = _infer_mounting(text)
         enriched["material"] = _infer_material(text) or enriched.get("material")
         enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
-        enriched["bulb_base_type"] = bulb_base or "E12/E26 target; validate by design size and supplier options"
+        enriched["bulb_base_type"] = bulb_base or "E12/E26 target by design size"
         if light_count and bulb_base:
             normalized_count = light_count.replace("; optional", " / optional")
             enriched["wattage_primary"] = f"Bulb-dependent; target {normalized_count} using {bulb_base} LED bulbs"
         elif light_count:
             enriched["wattage_primary"] = f"Bulb-dependent; target {light_count} replaceable LED bulbs"
         else:
-            enriched["wattage_primary"] = "Bulb-dependent; confirm bulb count during supplier research"
-        enriched["wattage_max"] = "Socket max TBD by supplier and certification file"
+            enriched["wattage_primary"] = "Bulb-dependent; bulb count defined by product design"
+        enriched["wattage_max"] = "Socket max by certification requirement"
         enriched["cct_primary"] = "2700K-3000K warm white target if bulbs are included"
         enriched["cct_max"] = "3000K target; avoid selectable CCT unless integrated LED"
-        enriched["lumens_target"] = "Bulb-dependent; validate total fixture output by included bulb bundle"
+        enriched["lumens_target"] = "Bulb-dependent; total fixture output defined by included bulb bundle"
         enriched["efficiency"] = "Bulb-dependent"
-        enriched["power_factor"] = "N/A for replaceable bulbs; validate if integrated LED"
-        enriched["operating_temperature"] = "Residential indoor ambient; supplier rating TBD"
+        enriched["power_factor"] = "N/A for replaceable bulbs; integrated LED requirement when applicable"
+        enriched["operating_temperature"] = "Residential indoor ambient operating range"
     elif category.slug == "under_cabinet":
         enriched["size_form_factor"] = _infer_integrated_form_factor(item, text)
         enriched["mounting_type"] = _infer_integrated_mounting(text, enriched.get("mounting_type"))
@@ -860,7 +916,7 @@ def _enrich_item(
         if item.get("_target_pack_count"):
             enriched["size_form_factor"] = f"{item.get('_target_pack_count')}-pack under-cabinet kit"
         enriched["wattage_primary"] = "Integrated LED; wattage by puck/bar/tape length and pack count"
-        enriched["lumens_target"] = "Task-light output by kit type; validate per-light and total kit lumens"
+        enriched["lumens_target"] = "Task-light output by kit type; per-light and total kit lumens"
         enriched["bulb_base_type"] = None
         enriched["bulb_shape"] = None
     if pricing:
@@ -886,7 +942,7 @@ def _fill_ideation_row(
     profile = _merged_attribute_profile(category, intelligence_defaults)
     enriched = _enrich_item(category, item, profile, market_samples, url_validation_cache)
     values = {
-        COLUMN_MAP[key]: value
+        COLUMN_MAP[key]: _clean_prd_requirement_text(key, value)
         for key, value in enriched.items()
         if key in COLUMN_MAP
     }
@@ -931,7 +987,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
         for item, enriched in zip(candidate_rows[:100], enriched_rows):
             evidence_parts = [str(item.get("why") or ""), str(item.get("url") or "")]
             if enriched.get("_link_validation"):
-                evidence_parts.append("Link validation: " + str(enriched.get("_link_validation")))
+                evidence_parts.append("Review link check: " + str(enriched.get("_link_validation")))
             if item.get("_sku_candidate_rationale"):
                 evidence_parts.append("SKU candidate: " + str(item.get("_sku_candidate_rationale")))
             mapping.append([
