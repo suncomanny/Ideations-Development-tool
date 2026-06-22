@@ -6,6 +6,7 @@ Run the scripts in order:
 
 0. `0 - Refresh Backend Data.py` when backend data is missing or older than 30 days
 1. `1 - Category Ideation Generator.py`
+1B. `1B - Product Demand Ideation Generator.py` for the demand-weighted Step 1B flow
 2. `2 - Ideation Template Generator.py`
 3. `3 - Ideation Research Tool.py`
 
@@ -122,6 +123,23 @@ backend/source_data/postgres_exports/line_reviews
 ```
 
 These JSON snapshots are backend data and are intentionally ignored by git. They are the files Step 1 uses to populate `Existing SKU Line Review`.
+
+Step 0 runs through local Postgres ODBC or a local Postgres connection string. It does not use Codex MCP. Configure one of these in the machine-local env file before running live refreshes:
+
+```text
+POSTGRES_ODBC_DSN=Postgres
+POSTGRES_DATABASE=<database>
+POSTGRES_USER=<user>
+POSTGRES_PASSWORD=<password>
+```
+
+or:
+
+```text
+POSTGRES_DSN=DSN=Postgres;UID=<user>;PWD=<password>;Database=<database>
+```
+
+`1B - Product Demand Ideation Generator.py` adds the demand-weighted Step 1B flow. It refreshes ecommerce competitor evidence and Stackline/Amazon evidence through local Redshift ODBC, uses the local Sunco catalog cache or Postgres ODBC refresh for catalog coverage, writes a Step 1-compatible workbook, and publishes a Step 2 handoff copy under `outputs/Ideations/Gap Workbooks/<category>`.
 
 ## Credentials
 

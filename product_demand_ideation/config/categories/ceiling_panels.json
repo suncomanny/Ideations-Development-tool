@@ -1,0 +1,61 @@
+﻿{
+  "category_id": "ceiling_panels",
+  "category_name": "Ceiling Panels",
+  "pilot_status": "active",
+  "output_policy": {
+    "write_to": "product_demand_ideation/experiments/ceiling_panels/outputs",
+    "do_not_write_to_existing_validated_outputs": true
+  },
+  "recommendation_tracks": {
+    "competitor_recommendations": {
+      "lead_signal": "competitor_inventory_movement",
+      "required_validation": [
+        "stackline_amazon_marketplace",
+        "sunco_catalog_coverage"
+      ],
+      "workbook_tab": "Recommendations"
+    },
+    "amazon_recommendations": {
+      "lead_signal": "stackline_amazon_marketplace",
+      "required_validation": [
+        "competitor_inventory_movement",
+        "sunco_catalog_coverage"
+      ],
+      "workbook_tab": "Amazon Recommendations"
+    }
+  },
+  "filters": {
+    "include_terms": [
+      "panel",
+      "troffer",
+      "flat panel",
+      "backlit panel",
+      "edge lit panel"
+    ],
+    "exclude_terms": [
+      "occupancy sensor",
+      "photocell",
+      "lens",
+      "mounting kit",
+      "cable",
+      "driver only",
+      "replacement driver",
+      "frame kit"
+    ]
+  },
+  "normalized_attributes": [
+    "fixture_type",
+    "size",
+    "wattage_values",
+    "wattage_count",
+    "cct_values",
+    "cct_count",
+    "lumens_min",
+    "lumens_max",
+    "voltage_values",
+    "dimming_type",
+    "emergency_backup",
+    "certifications",
+    "pack_qty"
+  ]
+}

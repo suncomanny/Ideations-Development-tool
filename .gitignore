@@ -14,5 +14,9 @@ backend/legacy_research_sessions/
 backend/source_data/
 outputs/**
 outputs/**/*.xlsx
+product_demand_ideation/cache/**
+product_demand_ideation/experiments/**
+product_demand_ideation/profile_audits/**
+!product_demand_ideation/experiments/.gitkeep
 backend/research_sessions/*/raw_collection/
 ~$*.xlsx

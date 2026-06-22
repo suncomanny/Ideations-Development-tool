@@ -6,7 +6,7 @@ from typing import Any
 
 APPROVED_DB_SOURCE_LABELS = {
     "postgres",
-    "postgres_mcp",
+    "postgres_odbc",
     "postgres_export",
     "private_postgres_export",
     "redshift",
