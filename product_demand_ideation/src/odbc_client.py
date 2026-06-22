@@ -89,45 +89,6 @@ def redshift_connection_string(default: str = "DSN=Redshift") -> str:
     return default
 
 
-def postgres_connection_string(default: str = "DSN=Postgres") -> str:
-    _load_local_env()
-
-    full = os.environ.get("POSTGRES_DSN") or os.environ.get("POSTGRES_CONNECTION_STRING")
-    if full:
-        return full
-
-    dsn = os.environ.get("POSTGRES_ODBC_DSN")
-    host = os.environ.get("POSTGRES_HOST") or os.environ.get("POSTGRES_SERVER")
-    port = os.environ.get("POSTGRES_PORT") or "5432"
-    database = os.environ.get("POSTGRES_DATABASE") or os.environ.get("POSTGRES_DB")
-    user = os.environ.get("POSTGRES_USER") or os.environ.get("POSTGRES_UID")
-    password = os.environ.get("POSTGRES_PASSWORD") or os.environ.get("POSTGRES_PWD")
-
-    if dsn:
-        parts = [f"DSN={_odbc_value(dsn)}"]
-        if database:
-            parts.append(f"Database={_odbc_value(database)}")
-        if user:
-            parts.append(f"UID={_odbc_value(user)}")
-        if password:
-            parts.append(f"PWD={_odbc_value(password)}")
-        return ";".join(parts)
-
-    if host and user and password and database:
-        driver = os.environ.get("POSTGRES_DRIVER") or "PostgreSQL Unicode(x64)"
-        parts = [
-            f"Driver={{{driver}}}",
-            f"Server={_odbc_value(host)}",
-            f"Port={_odbc_value(port)}",
-            f"Database={_odbc_value(database)}",
-            f"UID={_odbc_value(user)}",
-            f"PWD={_odbc_value(password)}",
-        ]
-        return ";".join(parts)
-
-    return default
-
-
 def redshift_connection_source(default: str = "DSN=Redshift") -> str:
     _load_local_env()
     if os.environ.get("REDSHIFT_DSN") or os.environ.get("REDSHIFT_CONNECTION_STRING"):
@@ -138,19 +99,6 @@ def redshift_connection_source(default: str = "DSN=Redshift") -> str:
         os.environ.get("REDSHIFT_PASSWORD") or os.environ.get("REDSHIFT_PWD")
     ):
         return "local REDSHIFT_HOST/REDSHIFT_USER/REDSHIFT_PASSWORD"
-    return default
-
-
-def postgres_connection_source(default: str = "DSN=Postgres") -> str:
-    _load_local_env()
-    if os.environ.get("POSTGRES_DSN") or os.environ.get("POSTGRES_CONNECTION_STRING"):
-        return "local POSTGRES_DSN / POSTGRES_CONNECTION_STRING"
-    if os.environ.get("POSTGRES_ODBC_DSN"):
-        return f"local ODBC DSN {os.environ.get('POSTGRES_ODBC_DSN')}"
-    if (os.environ.get("POSTGRES_HOST") or os.environ.get("POSTGRES_SERVER")) and (
-        os.environ.get("POSTGRES_PASSWORD") or os.environ.get("POSTGRES_PWD")
-    ):
-        return "local POSTGRES_HOST/POSTGRES_USER/POSTGRES_PASSWORD"
     return default
 
 

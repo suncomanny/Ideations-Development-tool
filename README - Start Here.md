@@ -124,22 +124,15 @@ backend/source_data/postgres_exports/line_reviews
 
 These JSON snapshots are backend data and are intentionally ignored by git. They are the files Step 1 uses to populate `Existing SKU Line Review`.
 
-Step 0 runs through local Postgres ODBC or a local Postgres connection string. It does not use Codex MCP. Configure one of these in the machine-local env file before running live refreshes:
+Step 0 runs through Postgres MCP and writes local JSON snapshots. It does not require local Postgres ODBC access.
 
-```text
-POSTGRES_ODBC_DSN=Postgres
-POSTGRES_DATABASE=<database>
-POSTGRES_USER=<user>
-POSTGRES_PASSWORD=<password>
-```
+`1B - Product Demand Ideation Generator.py` adds the demand-weighted Step 1B flow. It refreshes ecommerce competitor evidence and Stackline/Amazon evidence through local Redshift ODBC, uses the local Sunco catalog cache or Postgres MCP refresh for catalog coverage, writes a Step 1-compatible workbook, and publishes a Step 2 handoff copy under `outputs/Ideations/Gap Workbooks/<category>`.
 
-or:
+Source ownership is intentionally split:
 
-```text
-POSTGRES_DSN=DSN=Postgres;UID=<user>;PWD=<password>;Database=<database>
-```
-
-`1B - Product Demand Ideation Generator.py` adds the demand-weighted Step 1B flow. It refreshes ecommerce competitor evidence and Stackline/Amazon evidence through local Redshift ODBC, uses the local Sunco catalog cache or Postgres ODBC refresh for catalog coverage, writes a Step 1-compatible workbook, and publishes a Step 2 handoff copy under `outputs/Ideations/Gap Workbooks/<category>`.
+- Redshift ODBC: ecommerce competitor movement, Stackline/Amazon evidence.
+- Postgres MCP: Sunco catalog coverage cache and Step 0 line-review snapshots.
+- Ignored local cache/export files: repeatable workbook runs without querying every source every time.
 
 ## Credentials
 

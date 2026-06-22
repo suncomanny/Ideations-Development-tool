@@ -15,7 +15,7 @@ It is intentionally separate from the existing scripts:
 
 The final tool must run outside of Codex.
 
-Production data access should use a local Redshift/Postgres connection configured outside the shared project folder, such as:
+Production data access should use the approved source connector for each source family. Local credentials stay outside the shared project folder, such as:
 
 ```text
 C:\Users\<user>\.sunco_ideation_development\.env
@@ -24,7 +24,7 @@ C:\Users\<user>\.sunco_ideation_development\.env
 Expected production path:
 
 ```text
-ODBC DSN or database connection string -> local snapshot refresh -> workbook generator
+approved source connector -> local snapshot/cache refresh -> workbook generator
 ```
 
 Redshift ecommerce competitor evidence now prefers the local ODBC DSN:
@@ -48,28 +48,13 @@ REDSHIFT_PASSWORD=<password from data team>
 REDSHIFT_DATABASE=dev
 ```
 
-Supported Postgres options for Sunco catalog and Step 0 line-review refreshes:
-
-```text
-POSTGRES_ODBC_DSN=Postgres
-POSTGRES_DATABASE=<database>
-POSTGRES_USER=<user>
-POSTGRES_PASSWORD=<password>
-```
-
-or:
-
-```text
-POSTGRES_DSN=DSN=Postgres;UID=<user>;PWD=<password>;Database=<database>
-```
-
 Alternatively, use a full ODBC string:
 
 ```text
 REDSHIFT_DSN=DSN=Redshift;UID=odbc_user;PWD=<password>;Database=dev
 ```
 
-Codex MCP is not used by the integrated tool. Sunco catalog coverage uses the saved local SQLite cache, a local Postgres ODBC refresh, or approved Postgres/Redshift export files.
+Postgres ODBC is not required for Manny's workstation. Sunco catalog coverage uses the saved local SQLite cache, a Postgres MCP refresh, or approved Postgres/Redshift export files.
 
 Sunco catalog coverage is designed to run from a local SQLite cache:
 
@@ -83,7 +68,7 @@ Refresh it intentionally with:
 Refresh Product Demand Local Catalog Cache.py
 ```
 
-Normal `1B` workbook runs read from that local cache. If the cache does not exist yet, the tool seeds it through local Postgres ODBC and then continues. For Sunco's current catalog change rate, a weekly or monthly refresh is enough for routine A/B testing; refresh before leadership readouts or after known catalog/product-status updates.
+Normal `1B` workbook runs read from that local cache. If the cache does not exist yet, the tool seeds it through Postgres MCP and then continues. For Sunco's current catalog change rate, a weekly or monthly refresh is enough for routine A/B testing; refresh before leadership readouts or after known catalog/product-status updates.
 
 The SharePoint workbook `Sku's Classification.xlsx` / `PowerBI Families` can also be cached locally for the latest PM/category/Series ownership layer:
 
@@ -145,7 +130,7 @@ The Redshift refresh path is:
 local Amazon Redshift ODBC DSN -> pyodbc -> product_demand_ideation/experiments/<category>/exports/*_ecommerce_competitor_evidence_*.json
 ```
 
-Normal 1B runs refresh ecommerce snapshots through local Redshift ODBC when the newest snapshot is not ODBC-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window. There is no MCP fallback in the integrated main tool.
+Normal 1B runs refresh ecommerce snapshots through local Redshift ODBC when the newest snapshot is not ODBC-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window. Redshift MCP is not used by the integrated main tool.
 
 When Redshift ecommerce PDP rows exist for the selected category, 1B uses them to lead the main `Recommendations` tab. Amazon-derived display rows stay in `Amazon Recommendations`.
 

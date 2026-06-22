@@ -53,7 +53,7 @@ That gives PMs a clean separation:
 - `1 - Category Ideation Generator.py` = original validated model
 - `1B - Product Demand Ideation Generator.py` = new combined inventory + Stackline model
 
-The new launcher must be able to run without Codex. The final PM workflow should use local ODBC/DSN connectivity or approved refreshed snapshots.
+The new launcher must be able to run without Codex chat assistance. The final PM workflow should use Redshift ODBC, Postgres MCP, or approved refreshed snapshots.
 
 ## Proposed File Tree
 
@@ -109,21 +109,21 @@ The tool should have two separate steps:
 Refresh source snapshots -> Generate workbook from snapshots
 ```
 
-This matters because Redshift/Postgres credentials and workbook generation have different failure modes.
+This matters because Redshift, Postgres MCP, and workbook generation have different failure modes.
 
 Recommended production flow:
 
 ```text
-ODBC DSN or REDSHIFT_DSN -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
+Redshift ODBC DSN or REDSHIFT_DSN -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
 ```
 
 Recommended development fallback:
 
 ```text
-Local ODBC/cache refresh -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
+Postgres MCP/cache refresh -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
 ```
 
-The workbook generator should not care whether the snapshot came from ODBC, DSN, or an approved export, as long as the snapshot follows the same data contract.
+The workbook generator should not care whether the snapshot came from Redshift ODBC, Postgres MCP, or an approved export, as long as the snapshot follows the same data contract.
 
 ## Integration Phases
 
@@ -204,5 +204,5 @@ Do not merge into `main` until:
 - Ceiling Panels pilot works
 - workbook format is approved
 - data team fixes or confirms latest competitor PDP export behavior
-- standalone ODBC/DSN refresh works outside Codex
+- standalone Redshift ODBC and Postgres MCP refreshes work outside Codex chat
 - original Step 1 output remains unchanged in default mode

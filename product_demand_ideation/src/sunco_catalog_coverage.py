@@ -9,8 +9,13 @@ from typing import Any
 
 from ecommerce_evidence import profile_for
 from luminaire_performance import normalize_luminaire_performance
-from odbc_client import execute_odbc_sql, postgres_connection_source, postgres_connection_string, sanitize_connection_error
 from sku_classification_cache import enrich_catalog_rows_with_classification
+
+try:
+    from opportunity_engine.db_mcp import McpRemoteClient, sanitize_mcp_error
+except ImportError:  # pragma: no cover - user-facing scripts add backend/app before importing this module.
+    McpRemoteClient = None  # type: ignore[assignment]
+    sanitize_mcp_error = None  # type: ignore[assignment]
 
 
 CATALOG_COLUMNS = [
@@ -151,22 +156,30 @@ def write_catalog_snapshot(exports_dir: Path, category_slug: str, source_system:
     return target
 
 
-def refresh_catalog_snapshot_via_odbc(exports_dir: Path, category_slug: str, timeout_seconds: int = 240) -> Path:
+def _postgres_mcp_client(timeout_seconds: int) -> McpRemoteClient:
+    if McpRemoteClient is None:
+        raise RuntimeError("Postgres MCP refresh requires backend/app on sys.path.")
+    return McpRemoteClient(timeout_seconds=timeout_seconds, client_name="sunco-product-demand-catalog")
+
+
+def refresh_catalog_snapshot_via_mcp(exports_dir: Path, category_slug: str, timeout_seconds: int = 240) -> Path:
     sql = build_sunco_catalog_sql(category_slug)
     try:
-        rows = execute_odbc_sql(postgres_connection_string(), sql, timeout_seconds=timeout_seconds)
+        with _postgres_mcp_client(timeout_seconds) as client:
+            rows = client.execute_sql(sql, timeout_seconds=timeout_seconds)
     except Exception as exc:
+        detail = sanitize_mcp_error(exc) if sanitize_mcp_error else str(exc)
         raise RuntimeError(
-            "Sunco catalog snapshot refresh requires a local Postgres ODBC connection or connection string. "
-            f"Attempted {postgres_connection_source()}. {sanitize_connection_error(exc)}"
+            "Sunco catalog snapshot refresh requires Postgres MCP access. "
+            f"{detail}"
         ) from exc
-    return write_catalog_snapshot(exports_dir, category_slug, "postgres_odbc_sunco_catalog_snapshot", sql, rows)
+    return write_catalog_snapshot(exports_dir, category_slug, "postgres_mcp_sunco_catalog_snapshot", sql, rows)
 
 
 def load_or_refresh_catalog_snapshot(exports_dir: Path, category_slug: str) -> tuple[dict[str, Any], Path]:
     path = latest_catalog_snapshot(exports_dir, category_slug)
     if path is None:
-        path = refresh_catalog_snapshot_via_odbc(exports_dir, category_slug)
+        path = refresh_catalog_snapshot_via_mcp(exports_dir, category_slug)
     payload = json.loads(path.read_text(encoding="utf-8"))
     return payload, path
 
@@ -221,16 +234,18 @@ def write_catalog_cache(cache_path: Path, rows: list[dict[str, Any]], source_sys
     return cache_path
 
 
-def refresh_catalog_cache_via_odbc(cache_path: Path, timeout_seconds: int = 300) -> Path:
+def refresh_catalog_cache_via_mcp(cache_path: Path, timeout_seconds: int = 300) -> Path:
     sql = build_full_sunco_catalog_sql()
     try:
-        rows = execute_odbc_sql(postgres_connection_string(), sql, timeout_seconds=timeout_seconds)
+        with _postgres_mcp_client(timeout_seconds) as client:
+            rows = client.execute_sql(sql, timeout_seconds=timeout_seconds)
     except Exception as exc:
+        detail = sanitize_mcp_error(exc) if sanitize_mcp_error else str(exc)
         raise RuntimeError(
-            "Sunco catalog cache refresh requires a local Postgres ODBC connection or connection string. "
-            f"Attempted {postgres_connection_source()}. {sanitize_connection_error(exc)}"
+            "Sunco catalog cache refresh requires Postgres MCP access. "
+            f"{detail}"
         ) from exc
-    return write_catalog_cache(cache_path, rows, "postgres_odbc_local_sqlite_sunco_catalog_cache", sql)
+    return write_catalog_cache(cache_path, rows, "postgres_mcp_local_sqlite_sunco_catalog_cache", sql)
 
 
 def _cache_metadata(cache_path: Path) -> dict[str, str]:
@@ -294,7 +309,7 @@ def load_catalog_context_from_cache_or_snapshot(root: Path, category_slug: str) 
     cache_path = catalog_cache_path(root)
     if not cache_path.exists():
         try:
-            refresh_catalog_cache_via_odbc(cache_path)
+            refresh_catalog_cache_via_mcp(cache_path)
         except Exception:
             exports = root / "product_demand_ideation" / "experiments" / category_slug / "exports"
             snapshot, snapshot_path = load_or_refresh_catalog_snapshot(exports, category_slug)
@@ -313,8 +328,6 @@ def load_catalog_context_from_cache_or_snapshot(root: Path, category_slug: str) 
         rows, classification_path, classification_source = enrich_catalog_rows_with_classification(root, rows)
     metadata = _cache_metadata(cache_path)
     source = metadata.get("source_system") or "local_sqlite_sunco_catalog_cache"
-    if "mcp" in source.lower():
-        source = "local_sqlite_sunco_catalog_cache_from_approved_postgres_snapshot"
     generated_at = metadata.get("generated_at")
     if generated_at:
         source = f"{source} generated_at={generated_at}"

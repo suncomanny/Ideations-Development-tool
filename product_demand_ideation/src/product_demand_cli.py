@@ -11,12 +11,12 @@ def refresh_local_sunco_catalog_cache(root: Path | str) -> None:
     if str(backend_app) not in sys.path:
         sys.path.insert(0, str(backend_app))
 
-    from sunco_catalog_coverage import catalog_cache_path, refresh_catalog_cache_via_odbc
+    from sunco_catalog_coverage import catalog_cache_path, refresh_catalog_cache_via_mcp
 
     print("Product Demand local Sunco catalog cache refresh")
     print()
     target = catalog_cache_path(root)
-    refreshed = refresh_catalog_cache_via_odbc(target)
+    refreshed = refresh_catalog_cache_via_mcp(target)
     print("Refresh complete:")
     print(f"  {refreshed}")
     print()
