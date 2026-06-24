@@ -107,17 +107,42 @@ def refresh_line_review_snapshots(
                         }
                     )
                 except Exception as fallback_exc:
-                    print(f"  failed: {sanitize_mcp_error(fallback_exc)}")
-                    results.append(
-                        {
-                            "category": category.slug,
-                            "row_count": 0,
-                            "snapshot": None,
-                            "status": "failed",
-                            "error": sanitize_mcp_error(fallback_exc),
-                            "first_error": sanitize_mcp_error(exc),
-                        }
+                    print(f"  fallback without PO facts failed: {sanitize_mcp_error(fallback_exc)}")
+                    minimal_sql = build_line_review_sql(
+                        category,
+                        paths,
+                        include_purchase_order_facts=False,
+                        include_sales_facts=False,
                     )
+                    try:
+                        assert client is not None
+                        print("  retrying with minimal fallback query without PO or sales facts...")
+                        rows = client.execute_sql(minimal_sql, timeout_seconds=timeout_seconds)
+                        target = write_snapshot(paths, category, minimal_sql, rows)
+                        print(f"  wrote {len(rows)} minimal fallback row(s): {target}")
+                        results.append(
+                            {
+                                "category": category.slug,
+                                "row_count": len(rows),
+                                "snapshot": str(target),
+                                "status": "ok_minimal_without_po_or_sales_facts",
+                                "fallback_reason": sanitize_mcp_error(fallback_exc),
+                                "first_error": sanitize_mcp_error(exc),
+                            }
+                        )
+                    except Exception as minimal_exc:
+                        print(f"  failed: {sanitize_mcp_error(minimal_exc)}")
+                        results.append(
+                            {
+                                "category": category.slug,
+                                "row_count": 0,
+                                "snapshot": None,
+                                "status": "failed",
+                                "error": sanitize_mcp_error(minimal_exc),
+                                "fallback_error": sanitize_mcp_error(fallback_exc),
+                                "first_error": sanitize_mcp_error(exc),
+                            }
+                        )
     finally:
         if client is not None:
             client.__exit__(None, None, None)
