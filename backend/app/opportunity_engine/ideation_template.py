@@ -407,6 +407,12 @@ def _extract_wattage_text(text: str) -> str | None:
     values: list[str] = []
     for match in re.finditer(r"\b\d+(?:\.\d+)?\s*W\b", text, flags=re.IGNORECASE):
         value = match.group(0).replace(" ", "").upper()
+        try:
+            numeric = float(value.rstrip("W"))
+        except ValueError:
+            continue
+        if numeric <= 0 or numeric > 2000:
+            continue
         if value not in values:
             values.append(value)
     if not values:
@@ -1024,8 +1030,8 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             ("Selection rule", "Priority = High and Confidence = High; true, feature, and style gaps are all allowed. Matching ideation names are merged across source tabs."),
             ("Reference SKU rule", "Sunco.com/Shopify SKU first; if absent, use best-selling item by category revenue."),
             ("MSRP target rule", "When market price samples exist, Target MSRP is based on the 50th-55th percentile of comparable listings and is independent from margin targets."),
-            ("URL validation rule", "Step 2 checks Step 1 review URLs live when the workbook is generated. 2xx/3xx means verified; 403/429 means blocked by retailer/CDN and needs manual browser review; 404/410 means invalid and should be replaced."),
-            ("URL validation summary", _url_validation_summary(url_validation_cache)),
+            ("URL status rule", "Step 2 checks Step 1 review URLs live when the workbook is generated. 2xx/3xx means verified; 403/429 means blocked by retailer/CDN and needs manual browser review; 404/410 means invalid and should be replaced."),
+            ("URL status summary", _url_validation_summary(url_validation_cache)),
             ("Market price sample file", str(market_sample_path) if market_sample_path else "No category market price sample file found."),
             ("Category intelligence audit", format_intelligence_audit(intelligence)),
         ],

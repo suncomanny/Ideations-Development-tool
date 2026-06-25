@@ -97,15 +97,15 @@ DECISION_TREE_STEPS = [
     "3. Sunco gap gate: require evidence that Sunco does not already have active comparable coverage; Sunco.com/Shopify coverage has priority over marketplace-only checks.",
     "4. Actionability gate: require a PM action that can plausibly become a sourced SKU/family, variant, bundle, or channel listing.",
     "5. Ranking: exact-category rows sort ahead of adjacent candidates; High priority and High confidence sort ahead of Medium/Low.",
-    "6. Natural count +1: if exact results are sparse, include up to one adjacent candidate per recommendation tab, clearly warning that it still needs validation.",
-    "7. Research handoff: Step 2/Step 3 must validate attributes, live links, market pricing, competitive listings, and final launch fit before this becomes a PRD-ready product.",
+    "6. Natural count +1: if exact results are sparse, include up to one adjacent candidate per recommendation tab, clearly labeling it as exploratory.",
+    "7. Research handoff: Step 2/Step 3 refine attributes, live links, market pricing, competitive listings, and final launch fit before this becomes a PRD-ready product.",
 ]
 
 SUCCESS_PROXY_TEXT = (
     "The workbook does not claim guaranteed launch success. It chooses higher-probability ideations by triangulating "
     "market pull, competitor catalog coverage, Amazon/Stackline or BSR evidence where available, a documented Sunco "
     "assortment gap, and a concrete PM action path. Ideas with weaker category fit are labeled as supplemental and "
-    "must not be treated as proven true gaps until refreshed evidence supports them."
+    "remain exploratory until refreshed evidence supports them."
 )
 
 
@@ -218,7 +218,7 @@ def _decision_outcome(row: dict[str, Any], source_kind: str) -> str:
     if _is_high(row.get("priority")) and _is_high(row.get("confidence")) and _has_market_signal(row, source_kind) and _has_gap_language(row.get("sunco_check")):
         return "High-confidence exact gap - strongest Step 1 selection tier."
     if _is_high(row.get("priority")) or _is_high(row.get("confidence")):
-        return "Qualified exact-category candidate - selected for follow-up validation."
+        return "Qualified exact-category candidate - selected for Step 2 review."
     return "Lower-confidence exact-category candidate - review before moving into Step 2."
 
 
@@ -239,7 +239,7 @@ def _row_decision_rationale(row: dict[str, Any], source_kind: str) -> str:
 
     cautions: list[str] = []
     if row.get("_supplemental"):
-        cautions.append("Supplemental row; validate before treating as true gap")
+        cautions.append("Supplemental row; review before treating as true gap")
     if not (_is_high(row.get("priority")) and _is_high(row.get("confidence"))):
         cautions.append("Priority/confidence is not High/High")
     if not _has_gap_language(row.get("sunco_check")):
@@ -278,7 +278,7 @@ def _source_supplement(row: dict[str, Any], category: Category) -> dict[str, Any
     supplement["subcategory"] = category.run_name
     supplement["recommendation"] = f"[Supplemental candidate] {row.get('recommendation')}"
     supplement["priority"] = "Exploratory"
-    supplement["confidence"] = "Needs validation"
+    supplement["confidence"] = "Needs category fit review"
     supplement["example"] = (
         f"SUPPLEMENTAL WARNING: original source category was {source_category}; "
         f"original priority/confidence was {original_priority}/{original_confidence}. "
@@ -286,15 +286,15 @@ def _source_supplement(row: dict[str, Any], category: Category) -> dict[str, Any
     ).strip()
     supplement["sunco_check"] = (
         f"SUPPLEMENTAL WARNING: this is not yet proven as an exact {category.run_name} gap. "
-        f"It was included as the +1 adjacent candidate and must be validated before Step 2. "
+        f"It was included as the +1 adjacent candidate and needs category fit review before Step 2. "
         f"{row.get('sunco_check') or ''}"
     ).strip()
     supplement["why_gap"] = (
-        f"Adjacent-category seed for {category.run_name}; validate category fit, search demand, and Sunco coverage before treating as a true gap. "
+        f"Adjacent-category seed for {category.run_name}; review category fit, search demand, and Sunco coverage before treating as a true gap. "
         f"Original rationale: {row.get('why_gap') or ''}"
     ).strip()
     supplement["pm_action"] = (
-        f"Validate whether this adjacent idea belongs in {category.run_name}; only promote if fresh source evidence supports it. "
+        f"Determine whether this adjacent idea belongs in {category.run_name}; only promote if fresh source evidence supports it. "
         f"{row.get('pm_action') or ''}"
     ).strip()
     return supplement
@@ -310,7 +310,7 @@ def _amazon_supplement(row: dict[str, Any], category: Category) -> dict[str, Any
     supplement["subcategory"] = category.run_name
     supplement["recommendation"] = f"[Supplemental candidate] {row.get('recommendation')}"
     supplement["priority"] = "Exploratory"
-    supplement["confidence"] = "Needs validation"
+    supplement["confidence"] = "Needs category fit review"
     supplement["classification"] = "Supplemental adjacent candidate - not exact category proof"
     supplement["evidence"] = (
         f"SUPPLEMENTAL WARNING: original source category was {source_category}; "
@@ -319,11 +319,11 @@ def _amazon_supplement(row: dict[str, Any], category: Category) -> dict[str, Any
     ).strip()
     supplement["sunco_check"] = (
         f"SUPPLEMENTAL WARNING: this is not yet proven as an exact {category.run_name} Amazon gap. "
-        f"It was included as the +1 adjacent candidate and must be validated before Step 2. "
+        f"It was included as the +1 adjacent candidate and needs category fit review before Step 2. "
         f"{row.get('sunco_check') or ''}"
     ).strip()
     supplement["action"] = (
-        f"Validate whether this adjacent Amazon idea belongs in {category.run_name}; only promote if fresh source evidence supports it. "
+        f"Determine whether this adjacent Amazon idea belongs in {category.run_name}; only promote if fresh source evidence supports it. "
         f"{row.get('action') or ''}"
     ).strip()
     return supplement
@@ -678,7 +678,7 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
         "Success proxy",
         SUCCESS_PROXY_TEXT,
         "Use this answer when asked why these ideas are worth researching first.",
-        "Step 2 and Step 3 still need to validate attributes, links, pricing, and launch fit.",
+        "Step 2 and Step 3 refine attributes, links, pricing, and launch fit.",
         "",
     ])
     for row in data.get("amazon_rows", []):
