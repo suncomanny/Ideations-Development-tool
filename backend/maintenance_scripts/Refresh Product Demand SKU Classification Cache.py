@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "product_demand_ideation" / "src"))
 
 from sku_classification_cache import default_classification_workbook_path, refresh_classification_cache_from_workbook

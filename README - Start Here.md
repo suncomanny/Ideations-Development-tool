@@ -6,7 +6,6 @@ Run the scripts in order:
 
 0. `0 - Refresh Backend Data.py` when backend data is missing or older than 30 days
 1. `1 - Category Ideation Generator.py`
-1B. `1B - Product Demand Ideation Generator.py` for the demand-weighted Step 1B flow
 2. `2 - Ideation Template Generator.py`
 3. `3 - Ideation Research Tool.py`
 
@@ -52,7 +51,7 @@ backend/source_data/sharepoint_exports/sku_classification/SkuClassification_Powe
 Then refresh the local classification cache:
 
 ```text
-Refresh Product Demand SKU Classification Cache.py
+backend\maintenance_scripts\Refresh Product Demand SKU Classification Cache.py
 ```
 
 This creates:
@@ -66,7 +65,7 @@ The classification cache does not replace the tool's run-category list. It adds 
 After refreshing the classification cache, refresh the run-category reference:
 
 ```text
-Refresh Category Reference From PowerBI.py
+backend\maintenance_scripts\Refresh Category Reference From PowerBI.py
 ```
 
 This updates `templates/category_reference.csv` with the latest PowerBI-backed category owners, mapped PowerBI categories, and any newly mapped runnable categories. Categories that are useful opportunity areas but do not yet have current Sunco SKUs, such as `Chandeliers`, remain active with a note that no current PowerBI Families mapping exists.
@@ -138,7 +137,7 @@ This produces a research workbook from local/Stackline evidence only. The tool w
 - User-facing gap workbooks are saved in `outputs/Ideations/Gap Workbooks`.
 - User-facing PRD ideation workbooks are saved in `outputs/Ideations/PRD Ideation Workbooks`.
 - User-facing research reports are saved in `outputs/Research/Reports`.
-- Backend data, cache, logs, migrated sessions, and copied tool code live under `backend`.
+- Backend data, cache, logs, maintenance scripts, migrated sessions, and copied tool code live under `backend`.
 
 ## Data Freshness
 
@@ -154,7 +153,7 @@ These JSON snapshots are backend data and are intentionally ignored by git. They
 
 Step 0 runs through Postgres MCP and writes local JSON snapshots. It does not require local Postgres ODBC access.
 
-`1B - Product Demand Ideation Generator.py` adds the demand-weighted Step 1B flow. It refreshes ecommerce competitor evidence and Stackline/Amazon evidence through local Redshift ODBC, uses the local Sunco catalog cache or Postgres MCP refresh for catalog coverage, writes a Step 1-compatible workbook, and publishes a Step 2 handoff copy under `outputs/Ideations/Gap Workbooks/<category>`.
+`1 - Category Ideation Generator.py` now runs the demand-weighted Step 1 flow. It refreshes ecommerce competitor evidence and Stackline/Amazon evidence through local Redshift ODBC, uses the local Sunco catalog cache or Postgres MCP refresh for catalog coverage, writes a Step 1-compatible workbook, and publishes a Step 2 handoff copy under `outputs/Ideations/Gap Workbooks/<category>`.
 
 Source ownership is intentionally split:
 
