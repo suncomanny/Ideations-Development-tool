@@ -14,7 +14,7 @@ from .research_tool import (
     prepare_research_session,
     publish_combined_report,
     session_status,
-    write_claude_collection_prompt,
+    write_research_collection_tasks,
 )
 from .utils import open_folder, open_path, prompt_choice, prompt_yes_no
 
@@ -45,21 +45,26 @@ def _print_research_status(result: dict, session_root: Path) -> None:
                 print(f"- {stage}: {counts}")
 
     if next_tasks:
-        prompt_path = write_claude_collection_prompt(session_root, result)
+        task_paths = write_research_collection_tasks(session_root, result)
+        codex_task_path = task_paths.get("codex_task")
+        claude_fallback_path = task_paths.get("claude_fallback")
         print("\nNo research workbook is created yet. Raw competitor collection is still pending.")
         print("If Stackline autofilled Amazon/Home Depot, the remaining tasks are optional web enrichment.")
-        print("For the lowest-token run, skip Claude and choose 'Finalize latest prepared session' to build from available Stackline/local data.")
+        print("For the lowest-token run, skip web collection and choose 'Finalize latest prepared session' to build from available Stackline/local data.")
         print("Next collection tasks:")
         for task in next_tasks:
             print(
                 f"- Row {task.get('row_number')} | {task.get('ideation_name')} | "
                 f"{task.get('channel')} -> {task.get('output_file')}"
             )
-        print("\nCopy this exact prompt into Claude:")
-        if prompt_path:
-            print(prompt_path)
+        print("\nAsk Codex to complete this research task file:")
+        if codex_task_path:
+            print(codex_task_path)
         else:
-            print(session_root / "instructions" / "1 - COPY THIS PROMPT TO CLAUDE.md")
+            print(session_root / "instructions" / "1 - CODEX RESEARCH TASK.md")
+        if claude_fallback_path:
+            print("\nOptional fallback if Codex cannot complete the web collection:")
+            print(claude_fallback_path)
         print("\nAfter those raw files are completed, run Step 3 again and choose:")
         print("Finalize latest prepared session")
     else:
@@ -178,8 +183,8 @@ def run_step3(root: Path | str) -> None:
             status_result = session_status(paths, session_root)
             _print_research_status(status_result, session_root)
         if session_root.exists():
-            prompt_file = session_root / "instructions" / "1 - COPY THIS PROMPT TO CLAUDE.md"
-            open_path(prompt_file if prompt_file.exists() else session_root / "instructions")
+            task_file = session_root / "instructions" / "1 - CODEX RESEARCH TASK.md"
+            open_path(task_file if task_file.exists() else session_root / "instructions")
         return
 
     session = ready_session if mode.startswith("Finalize ready") else latest_existing_session
@@ -215,5 +220,5 @@ def run_step3(root: Path | str) -> None:
     print(f"\nStatus for:\n{session}")
     print(f"Log:\n{result.get('_log_path')}")
     _print_research_status(result, session)
-    prompt_file = session / "instructions" / "1 - COPY THIS PROMPT TO CLAUDE.md"
-    open_path(prompt_file if prompt_file.exists() else session / "instructions")
+    task_file = session / "instructions" / "1 - CODEX RESEARCH TASK.md"
+    open_path(task_file if task_file.exists() else session / "instructions")

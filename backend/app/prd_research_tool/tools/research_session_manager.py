@@ -1121,15 +1121,15 @@ def validate_raw_artifacts(
 
 
 def build_claude_instructions(session_dir: Path, workbook_path: str, batch_id: str) -> str:
-    """Session-specific instructions for Claude collection work."""
-    return f"""# Claude Next
+    """Session-specific optional fallback instructions for Claude collection work."""
+    return f"""# Claude Fallback
 
 Session root: `{session_dir}`
 Workbook: `{Path(workbook_path).resolve()}`
 Batch id: `{batch_id}`
 
-You are the preferred collector for Step `4C`, `4D`, and `4E`, but only after Codex has already prepared the session and narrowed the missing work.
-Codex owns deterministic local work first. You only own the exact raw collection batch handed to you.
+You are an optional fallback collector for Step `4C`, `4D`, and `4E`.
+Codex is the default research assistant. Only use this fallback when Codex cannot complete the exact raw collection batch.
 
 Do next:
 1. Use the Codex-provided batch scope instead of exploring the whole session.
@@ -1170,7 +1170,7 @@ Session root: `{session_dir}`
 Workbook: `{Path(workbook_path).resolve()}`
 Batch id: `{batch_id}`
 
-You own only the exact raw-collection tasks handed off by Codex.
+You own only the exact raw-collection tasks handed off by the PM/Codex workflow.
 
 Do next:
 1. Use the Codex-provided batch scope instead of reading the whole session.
@@ -1191,19 +1191,19 @@ Collector rules:
 - If the artifact already says `complete` or `blocked`, skip it.
 - If the session dies mid-task, leave the file as `in_progress` with whatever has been captured so far.
 - If a raw artifact exists but fails schema validation, Codex may repair it after you stop.
-- Do not spend time on session-wide exploration or replanning. Codex should do that first.
+- Do not spend time on session-wide exploration or replanning. The Step 3 tool and Codex task bundle define the scope first.
 """
 
 
 def build_codex_instructions(session_dir: Path, workbook_path: str, batch_id: str) -> str:
-    """Session-specific instructions for Codex structuring and analysis work."""
+    """Session-specific instructions for Codex collection, structuring, and analysis work."""
     return f"""# Codex Next
 
 Session root: `{session_dir}`
 Workbook: `{Path(workbook_path).resolve()}`
 Batch id: `{batch_id}`
 
-You own Step `4B`, `4F`, `5A`, `5B`, `5C`, and `6A`, and you are the fallback owner for raw artifact repair and small-batch raw collection when the preferred collector is unavailable.
+You are the default Step 3 research assistant. You own Step `4B`, `4F`, `5A`, `5B`, `5C`, and `6A`, and you may complete small-batch raw collection tasks from `instructions/1 - CODEX RESEARCH TASK.md` when the PM asks for research assistance.
 
 Do next:
 1. Keep `packets/`, `schemas/`, `instructions/`, and `manifest.json` current.
@@ -1220,7 +1220,7 @@ Do next:
    - `python tools/research_report_builder.py "{session_dir}"`
 7. Build the combined workbook for completed rows with:
    - `python tools/research_report_builder.py "{session_dir}" --combined`
-8. Validate raw collection artifacts when a collector hands off a batch:
+8. Validate raw collection artifacts when you complete or receive a batch:
     - `python tools/research_session_manager.py validate "{session_dir}" --rows <rows_touched>`
 9. Refresh status after each pass:
     - `python tools/research_session_manager.py update "{session_dir}"`

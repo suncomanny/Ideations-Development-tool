@@ -470,11 +470,11 @@ def session_status(paths: ProjectPaths, session_root: Path) -> dict[str, Any]:
     return run_orchestrator(paths, ["status", str(session_root), "--limit", "10"], f"research_status_{session_root.name}_{timestamp()}.log")
 
 
-def write_claude_collection_prompt(session_root: Path, status_result: dict[str, Any]) -> Path | None:
+def write_research_collection_tasks(session_root: Path, status_result: dict[str, Any]) -> dict[str, Path | None]:
     status = status_result.get("status") or {}
     tasks = status.get("next_tasks") or []
     if not tasks:
-        return None
+        return {"codex_task": None, "claude_fallback": None, "task_bundle": None}
 
     instructions = session_root / "instructions"
     instructions.mkdir(parents=True, exist_ok=True)
@@ -487,6 +487,7 @@ def write_claude_collection_prompt(session_root: Path, status_result: dict[str, 
         "COLLECTOR_NEXT.md",
         "STEP4_PROMPT.md",
         "COPY_TO_CLAUDE.md",
+        "1 - COPY THIS PROMPT TO CLAUDE.md",
     ]:
         helper_path = instructions / helper_name
         if helper_path.exists():
@@ -495,7 +496,8 @@ def write_claude_collection_prompt(session_root: Path, status_result: dict[str, 
                 destination.unlink()
             helper_path.replace(destination)
 
-    output = instructions / "1 - COPY THIS PROMPT TO CLAUDE.md"
+    codex_output = instructions / "1 - CODEX RESEARCH TASK.md"
+    claude_output = instructions / "2 - OPTIONAL CLAUDE FALLBACK PROMPT.md"
     task_lines = []
     output_files = []
     packet_files = []
@@ -522,6 +524,7 @@ def write_claude_collection_prompt(session_root: Path, status_result: dict[str, 
             "Use the row packet only if this task bundle is insufficient.",
             "Write only the listed output files.",
             "Do not normalize, dedupe, rank, analyze, or create the final workbook.",
+            "Return control to the PM after raw collection so Step 3 can be finalized intentionally.",
         ],
         "schemas": {
             "collection_artifact": str(session_root / "schemas" / "collection-artifact.schema.json"),
@@ -589,72 +592,71 @@ def write_claude_collection_prompt(session_root: Path, status_result: dict[str, 
             }
         )
 
-    task_bundle_path = support / "CLAUDE_TASKS_LITE.json"
+    task_bundle_path = support / "CODEX_RESEARCH_TASKS.json"
     write_json(task_bundle_path, task_bundle)
 
-    content = f"""# Copy This Prompt To Claude
+    codex_content = f"""# Codex Research Task
+
+Complete the pending raw competitor collection tasks for this prepared Sunco Step 3 research session.
+
+Session root:
+`{session_root}`
+
+Task bundle:
+`{task_bundle_path}`
+
+What to do:
+1. Read the task bundle first.
+2. Complete only the listed row/channel tasks.
+3. Use the packet file only when the task bundle does not contain enough detail.
+4. Verify each competitor/listing URL is real and relevant before writing it.
+5. Write only the listed raw output files.
+6. Run the validation command from the task bundle.
+7. Run the manifest update command from the task bundle.
+8. Stop after raw collection and validation. Do not normalize, analyze, or create the final workbook unless the PM explicitly asks.
+
+Pending tasks:
+{chr(10).join(task_lines)}
+
+Rules:
+- Use real product pages or real category/listing pages only.
+- Do not invent products, prices, certifications, dimensions, pack sizes, URLs, or images.
+- If a channel has no reliable match, write a blocked or complete-empty raw artifact with notes instead of fabricating.
+- Prefer official brand/PDP pages for brand-site tasks.
+- Keep Amazon/Home Depot tasks narrow to the ideation row and channel in the task bundle.
+
+After Codex finishes these raw files, the PM should run:
+`3 - Ideation Research Tool.py`
+
+Then choose:
+`Finalize latest prepared session`
+"""
+    codex_output.write_text(codex_content, encoding="utf-8")
+
+    claude_content = f"""# Optional Claude Fallback Prompt
 
 Run the Sunco PRD Research collection tasks listed in this task bundle:
 
 `{task_bundle_path}`
 
 Rules:
-- Complete only the tasks in `CLAUDE_TASKS_LITE.json`.
+- Complete only the tasks in `CODEX_RESEARCH_TASKS.json`.
 - Read the row packet only if the task bundle is insufficient.
 - Write only the listed output files.
 - Run the validation and update commands from the task bundle.
 - Stop after raw collection. Do not normalize, analyze, or create the final workbook.
 """
-    output.write_text(content, encoding="utf-8")
-    return output
+    claude_output.write_text(claude_content, encoding="utf-8")
+    return {"codex_task": codex_output, "claude_fallback": claude_output, "task_bundle": task_bundle_path}
 
-    content = f"""# Copy This Prompt To Claude
 
-Please run PRD Research Collect for this exact prepared session.
+def write_claude_collection_prompt(session_root: Path, status_result: dict[str, Any]) -> Path | None:
+    """Backward-compatible wrapper for older callers.
 
-Session root:
-`{session_root}`
-
-Support instructions:
-`{support / "STEP4_PROMPT.md"}`
-
-Read only:
-- `{session_root / "manifest.json"}`
-""" + "".join(f"- `{session_root / packet}`\n" for packet in dict.fromkeys(packet_files)) + f"""
-Work only these pending row/channel tasks:
-{chr(10).join(task_lines)}
-
-For each task:
-1. Read the row packet.
-2. Use the packet's `research_plan` as the source of truth.
-3. Collect raw competitor data only for the listed channel.
-4. Write the result only to the listed output file.
-5. Follow:
-   - `{support / "STEP4_PROMPT.md"}`
-   - `{session_root / "schemas" / "collection-artifact.schema.json"}`
-   - `{session_root / "schemas" / "competitor-result.schema.json"}`
-6. Set `artifact_status` to `complete`, `in_progress`, or `blocked`.
-7. Do not edit `manifest.json`, `normalized`, `analysis`, or `reports`.
-8. Do not normalize, dedupe, rank, analyze, or fabricate missing specs.
-
-Output files to complete:
-""" + "".join(f"- `{session_root / out_file}`\n" for out_file in output_files) + f"""
-After writing the raw artifacts, run this validation command:
-
-```powershell
-python "{session_root.parents[1] / "app" / "prd_research_tool" / "tools" / "research_session_manager.py"}" validate "{session_root}" --rows {",".join(dict.fromkeys(str(task.get("row_number")) for task in tasks if task.get("row_number")))}
-```
-
-Then run this manifest update command:
-
-```powershell
-python "{session_root.parents[1] / "app" / "prd_research_tool" / "tools" / "research_session_manager.py"}" update "{session_root}"
-```
-
-Stop after the raw artifacts and validation/update commands are complete. Do not create the final report workbook; Codex will do that in Step 3 Finalize.
-"""
-    output.write_text(content, encoding="utf-8")
-    return output
+    New Step 3 sessions are Codex-first. This returns the optional Claude fallback
+    path only for callers that still expect a Claude prompt.
+    """
+    return write_research_collection_tasks(session_root, status_result).get("claude_fallback")
 
 
 def _candidate_report_paths(session_root: Path) -> list[Path]:

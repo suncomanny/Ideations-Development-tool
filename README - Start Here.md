@@ -108,11 +108,11 @@ Step 3 has two phases:
    - This creates a backend session and collection instructions.
    - This does **not** create the final research workbook yet.
    - When a Redshift Stackline cache exists for the category, Step 3 uses that first, then local Stackline CSVs, then web fallback.
-   - Stackline-backed Amazon and Home Depot raw artifacts are autofilled locally when possible, so Claude only handles the remaining web-enrichment tasks.
-   - Lowest-token option: if the remaining tasks are only optional brand-site enrichment, skip Claude and run Step 3 again with `Finalize latest prepared session`; the report will be based on available Stackline/local data and the workbook/session notes will say brand-site enrichment was skipped.
+   - Stackline-backed Amazon and Home Depot raw artifacts are autofilled locally when possible, so Codex only handles the remaining web-enrichment tasks if the PM wants additional external research.
+   - Lowest-token option: if the remaining tasks are only optional brand-site enrichment, skip web collection and run Step 3 again with `Finalize latest prepared session`; the report will be based on available Stackline/local data and the workbook/session notes will say brand-site enrichment was skipped.
    - If competitor collection is still pending, the script prints the pending row/channel tasks and opens the session `instructions` folder.
-   - Open `1 - COPY THIS PROMPT TO CLAUDE.md` and copy the full contents into Claude to start the raw collection handoff.
-   - The prompt points Claude to `instructions/_support/CLAUDE_TASKS_LITE.json`; users do not need to open the support files directly.
+   - Open `1 - CODEX RESEARCH TASK.md` and ask Codex to complete that task file when additional AI-assisted web research is needed.
+   - `2 - OPTIONAL CLAUDE FALLBACK PROMPT.md` is created only as a fallback if Codex cannot complete the web collection.
 2. Complete the raw competitor collection files listed in the instructions.
    - The files live under the session `raw` folder.
    - Required channels are usually `amazon`, `brick_and_mortar`, and `brand_sites`.
@@ -123,7 +123,7 @@ Use `Check latest session status` any time Step 3 opens a backend folder but no 
 
 ## Low-Token Clean Run
 
-To test the full workflow without using Claude tokens:
+To test the full workflow without web-collection tokens:
 
 1. Run `1 - Category Ideation Generator.py`.
 2. Run `2 - Ideation Template Generator.py`.
