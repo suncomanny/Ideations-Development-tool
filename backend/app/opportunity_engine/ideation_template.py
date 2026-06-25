@@ -407,6 +407,12 @@ def _extract_wattage_text(text: str) -> str | None:
     values: list[str] = []
     for match in re.finditer(r"\b\d+(?:\.\d+)?\s*W\b", text, flags=re.IGNORECASE):
         value = match.group(0).replace(" ", "").upper()
+        try:
+            numeric = float(value.rstrip("W"))
+        except ValueError:
+            continue
+        if numeric <= 0 or numeric > 2000:
+            continue
         if value not in values:
             values.append(value)
     if not values:

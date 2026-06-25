@@ -80,10 +80,18 @@ ELECTRICAL_EXCLUDE_TERMS = DEFAULT_EXCLUDE_TERMS + (
 )
 
 GROW_LIGHT_EXCLUDE_TERMS = DEFAULT_EXCLUDE_TERMS + (
+    "capacitor",
     "controller",
     "control",
     "controls",
     "digital programmable timer",
+    "hid lighting",
+    "high pressure sodium",
+    "hps",
+    "cfl",
+    "fluorescent",
+    "incandescent",
+    "metal halide",
     "timer",
     "outlet",
     "nutrient",
@@ -93,7 +101,19 @@ GROW_LIGHT_EXCLUDE_TERMS = DEFAULT_EXCLUDE_TERMS + (
     "tray",
     "rope ratchet",
     "hanger",
+    "reflector",
     "accessory",
+)
+
+COMMERCIAL_GROW_LIGHT_EXCLUDE_TERMS = GROW_LIGHT_EXCLUDE_TERMS + (
+    "a19",
+    "br30",
+    "bulb",
+    "e26",
+    "lamp - br",
+    "lamp - par",
+    "lamp - type",
+    "par38",
 )
 
 GROW_LIGHT_STRONG_TERMS = (
@@ -134,6 +154,19 @@ GROW_LIGHT_ALWAYS_REJECT_TERMS = (
     "power strip",
     "oil filled capacitor",
     "capacitor",
+    "cfl",
+    "fluorescent",
+    "high pressure sodium",
+    "reflector",
+)
+
+GROW_LIGHT_IDENTITY_REJECT_TERMS = (
+    "foundry lighting",
+    "high temperature led",
+    "high temperature light",
+    "high temperature lights",
+    "power plant lighting",
+    "steel plant lighting",
 )
 
 GROW_LIGHT_CONTEXT_REJECT_TERMS = (
@@ -161,12 +194,16 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
         ("grow light",),
         (
             "grow light",
+            "grow fixture",
             "grow lamp",
             "horticulture led",
             "horticulture luminaire",
+            "horticulture light",
             "horticulture",
+            "plant light",
+            "full spectrum plant",
         ),
-        GROW_LIGHT_EXCLUDE_TERMS,
+        COMMERCIAL_GROW_LIGHT_EXCLUDE_TERMS,
         True,
     ),
     "commercial_landscape": CategoryProfile(("pathway/landscape", "bollard"), ("landscape fixture", "path light", "pathway light", "bollard"), FIXTURE_EXCLUDE_TERMS + ("deck light", "step light")),
@@ -177,7 +214,30 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
     "flood_lights": CategoryProfile(("flood light",), ("flood light", "security flood"), FIXTURE_EXCLUDE_TERMS),
     "lamps": CategoryProfile((), ("table lamp", "floor lamp", "desk lamp"), DEFAULT_EXCLUDE_TERMS + ("dimming module", "appliance module", "plug-in module")),
     "led_ready_fixtures": CategoryProfile((), ("led ready", "ready fixture", "lamp ready"), FIXTURE_EXCLUDE_TERMS),
-    "linears": CategoryProfile(("strip/linear",), ("linear fixture", "linear light", "strip fixture"), FIXTURE_EXCLUDE_TERMS + ("rope light", "tape light", "connector")),
+    "linears": CategoryProfile(
+        (),
+        (
+            "linear high bay",
+            "recessed linear",
+            "architectural led linear",
+            "architectural linear",
+            "linear fixture",
+        ),
+        FIXTURE_EXCLUDE_TERMS
+        + (
+            "channel",
+            "extrusion",
+            "led strip",
+            "power strip",
+            "shop light",
+            "strip fixture",
+            "strip light",
+            "tape light",
+            "rope light",
+            "connector",
+        ),
+        True,
+    ),
     "low_voltage_transformers": CategoryProfile((), ("low voltage transformer", "12v transformer", "24v transformer", "landscape transformer"), ELECTRICAL_EXCLUDE_TERMS),
     "outdoor_ceiling": CategoryProfile(("surface mount",), ("outdoor ceiling", "porch ceiling", "ceiling mount outdoor"), FIXTURE_EXCLUDE_TERMS + ("emergency vehicle", "hideaway strobe")),
     "outdoor_security": CategoryProfile(("security", "flood light"), ("security", "motion flood", "flood light"), FIXTURE_EXCLUDE_TERMS + ("lampholder",)),
@@ -207,13 +267,16 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
     "pendants": CategoryProfile(("pendant",), ("pendant fixture", "pendant light", "pendants"), FIXTURE_EXCLUDE_TERMS),
     "residential_fans": CategoryProfile((), ("ceiling fan", "residential fan", "fan light kit"), FIXTURE_EXCLUDE_TERMS),
     "residential_grow_lights": CategoryProfile(
-        ("grow light", "bulb", "lamp"),
+        ("grow light",),
         (
             "grow light",
+            "grow bulb",
             "plant light",
+            "plant lamp",
             "grow lamp",
             "plant grow",
             "full spectrum plant",
+            "seed starting light",
         ),
         GROW_LIGHT_EXCLUDE_TERMS,
         True,
@@ -246,11 +309,69 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
         ),
         SMART_EXCLUDE_TERMS,
     ),
+    "shop_light": CategoryProfile(
+        (),
+        ("shop light", "shop lights", "garage light", "garage lights", "utility shop light", "linkable shop light"),
+        FIXTURE_EXCLUDE_TERMS
+        + (
+            "architectural",
+            "channel",
+            "downlight",
+            "emergency",
+            "flood",
+            "grow",
+            "outdoor",
+            "power strip",
+            "recessed",
+            "sconce",
+            "security",
+            "solar",
+            "stairwell",
+            "step light",
+            "strip fixture",
+            "under cabinet",
+            "wall light",
+        ),
+        True,
+    ),
     "sport_lights": CategoryProfile(("sport light",), ("sport light", "stadium light", "field light"), FIXTURE_EXCLUDE_TERMS + ("slipfitter mount",)),
-    "striplights": CategoryProfile(("strip/linear",), ("strip light", "linear strip", "general purpose strip"), FIXTURE_EXCLUDE_TERMS + ("rope light", "tape light", "connector")),
+    "striplights": CategoryProfile(
+        ("strip/linear",),
+        ("strip fixture", "strip light fixture", "linear strip", "general purpose strip"),
+        FIXTURE_EXCLUDE_TERMS
+        + (
+            "architectural",
+            "channel",
+            "cob led strip",
+            "cove",
+            "extrusion",
+            "light bar",
+            "power strip",
+            "rope light",
+            "spool",
+            "stairwell",
+            "tape light",
+            "under cabinet",
+            "vapor tight",
+            "vaportight",
+            "wall wash",
+        ),
+    ),
     "string_lights": CategoryProfile(("string light",), ("string light",)),
     "tape_rope_light": CategoryProfile((), ("tape light", "rope light", "led strip"), DEFAULT_EXCLUDE_TERMS + ("linear fixture", "strip fixture", "track", "connector", "pigtail", "light bar", "power cable", "power cord", "channel", "raceway")),
-    "ufo": CategoryProfile(("high bay",), ("ufo", "high bay")),
+    "ufo": CategoryProfile(
+        (),
+        ("ufo", "ufo high bay", "ufo led high bay", "ufo lighting"),
+        FIXTURE_EXCLUDE_TERMS
+        + (
+            "linear high bay",
+            "linear led high bay",
+            "led ready",
+            "lamp ready",
+            "t8",
+        ),
+        True,
+    ),
     "under_cabinet": CategoryProfile(("under cabinet",), ("under cabinet", "task lighting")),
     "vanity": CategoryProfile(("vanity & wall - linear vanity", "sconce"), ("vanity",)),
     "vaportights": CategoryProfile(("vapor tight",), ("vapor tight", "vaportight")),
@@ -278,7 +399,15 @@ def _grow_light_text(row: dict[str, Any]) -> str:
 
 def is_grow_light_candidate(row: dict[str, Any]) -> bool:
     text = f" {_grow_light_text(row)} "
+    identity_text = " ".join(
+        _text(row.get(key))
+        for key in ["name", "category", "product_type", "brand", "sku", "url"]
+    ).lower()
+    if any(term in identity_text for term in GROW_LIGHT_IDENTITY_REJECT_TERMS):
+        return False
     if any(term in text for term in GROW_LIGHT_ALWAYS_REJECT_TERMS):
+        return False
+    if any(term in text for term in ["grow bulb", "grow bulbs", "plant grow lamps"]) and " led " not in text:
         return False
     has_strong = any(term in text for term in GROW_LIGHT_STRONG_TERMS)
     if any(term in text for term in GROW_LIGHT_CONTEXT_REJECT_TERMS) and not has_strong:
@@ -289,6 +418,141 @@ def is_grow_light_candidate(row: dict[str, Any]) -> bool:
     has_plant_context = any(term in text for term in [" plant", " plants", " grow", " growing", " seed", " bloom", " ppfd", " ppf ", " par "])
     return has_support and has_plant_context and any(
         light_term in text for light_term in [" led ", " lamp", " bulb", "fixture", "light", "luminaire"]
+    )
+
+
+def is_residential_grow_light_candidate(row: dict[str, Any]) -> bool:
+    text = f" {_grow_light_text(row)} "
+    perf = normalize_luminaire_performance(
+        " ".join(_text(row.get(key)) for key in ["name", "description", "wattage"])
+    )
+    max_watt = max(perf.watt_values, default=0)
+    small_linear_form = any(
+        term in text
+        for term in [
+            "seed starting",
+            "shelf",
+            "clip",
+            "desk",
+            "under cabinet",
+            "shop light",
+            "strip",
+            "t5",
+            "t8",
+            "2ft",
+            "2 ft",
+            "4ft",
+            "4 ft",
+        ]
+    )
+    bulb_or_lamp_form = any(term in text for term in [" bulb", " lamp", "br30", "par38"])
+    if max_watt > 150 and not small_linear_form:
+        return False
+    if small_linear_form or bulb_or_lamp_form:
+        return True
+    return max_watt == 0 or max_watt <= 150
+
+
+def is_shop_light_candidate(row: dict[str, Any]) -> bool:
+    name = _text(row.get("name")).lower()
+    product_type = _text(row.get("product_type")).lower()
+    category = _text(row.get("category")).lower()
+    full_text = f" {name} {product_type} {category} "
+    reject_terms = (
+        "canopy",
+        "cob led strip",
+        "downlight",
+        "emergency",
+        "flood",
+        "picture light",
+        "recessed",
+        "sconce",
+        "security",
+        "solar",
+        "stairwell",
+        "step light",
+        "strip light spool",
+        "ufo high bay",
+        "under cabinet",
+        "wall light",
+    )
+    if any(term in full_text for term in reject_terms):
+        return False
+    if "linear high bay" in full_text and "shop light" not in name:
+        return False
+    return (
+        "shop light" in name
+        or "shop strip light" in name
+        or "shop light" in product_type
+        or ("wraparound" in name and "shop light" in category)
+    )
+
+
+def is_emergency_candidate(row: dict[str, Any]) -> bool:
+    name = _text(row.get("name")).lower()
+    product_type = _text(row.get("product_type")).lower()
+    category = _text(row.get("category")).lower()
+    full_text = f" {name} {product_type} {category} "
+    reject_terms = (
+        "canopy",
+        "flat panel",
+        "high bay",
+        "panel fixture",
+        "panel light",
+        "shop light",
+        "stairwell",
+        "strip fixture",
+        "troffer",
+        "vapor tight",
+        "wall pack",
+    )
+    if any(term in full_text for term in reject_terms):
+        return False
+    allow_terms = (
+        "bug-eye",
+        "bug eye",
+        "combo exit",
+        "emergency battery backup micro inverter",
+        "emergency inverter",
+        "emergency light",
+        "emergency lights",
+        "exit sign",
+        "remote head",
+    )
+    return product_type == "emergency/exit" or any(term in full_text for term in allow_terms)
+
+
+def is_striplights_candidate(row: dict[str, Any]) -> bool:
+    name = _text(row.get("name")).lower()
+    product_type = _text(row.get("product_type")).lower()
+    category = _text(row.get("category")).lower()
+    full_text = f" {name} {product_type} {category} "
+    reject_terms = (
+        "architectural",
+        "channel",
+        "cob led strip",
+        "cove",
+        "extrusion",
+        "light bar",
+        "power strip",
+        "rope light",
+        "spool",
+        "stairwell",
+        "tape light",
+        "under cabinet",
+        "vapor tight",
+        "vaportight",
+        "wall wash",
+    )
+    if any(term in full_text for term in reject_terms):
+        return False
+    return (
+        "strip fixture" in name
+        or "strip light fixture" in name
+        or ("strip light" in name and "fixture" in full_text)
+        or ("general purpose strip" in full_text and "fixture" in full_text)
+        or ("linear strip" in full_text and "fixture" in full_text)
+        or (product_type == "strip/linear" and "fixture" in full_text and "strip" in full_text)
     )
 
 
@@ -547,10 +811,29 @@ def _feature_signals(text: str) -> tuple[str, ...]:
 
 
 def _product_type_signal(row: dict[str, Any]) -> str:
+    text = " ".join(_text(row.get(key)) for key in ["name", "category"]).lower()
+    if "vapor tight" in text or "vaportight" in text or "vapor-proof" in text or "vapor proof" in text:
+        if "strip" in text or "linear" in text:
+            return "Linear Vapor Tight"
+        if "led ready" in text or "lamp ready" in text:
+            return "LED Ready Vapor Tight"
+        return "Vapor Tight"
+    if "grow" in text or "horticulture" in text:
+        if "vapor tight" in text:
+            return "Vapor Tight Grow Fixture"
+        if "top light" in text:
+            return "Horticulture Top Light"
+        if "strip" in text or "shop light" in text:
+            return "Linear/Shop Grow Light"
+        if "panel" in text:
+            return "Panel Grow Light"
+        if "bulb" in text or "lamp" in text:
+            return "Grow Bulb/Lamp"
+        if "fixture" in text or "luminaire" in text or "light" in text:
+            return "Grow Light Fixture"
     product_type = _text(row.get("product_type"))
     if product_type:
         return product_type
-    text = " ".join(_text(row.get(key)) for key in ["name", "category"]).lower()
     if "wraparound" in text or "wrap around" in text:
         return "Wraparound"
     if "troffer" in text:
@@ -560,17 +843,27 @@ def _product_type_signal(row: dict[str, Any]) -> str:
     return "Ecommerce product"
 
 
-def _spec_signature(row: dict[str, Any]) -> tuple[str, ...]:
-    text = " ".join(_text(row.get(key)) for key in ["name", "description", "category", "product_type", "wattage", "lumens", "cct", "voltage"])
-    perf = normalize_luminaire_performance(text)
+def _spec_signature(row: dict[str, Any], product_type_override: str = "") -> tuple[str, ...]:
+    product_spec_text = " ".join(
+        _text(row.get(key)) for key in ["name", "wattage", "lumens", "cct", "voltage"]
+    )
+    feature_text = " ".join(
+        _text(row.get(key)) for key in ["name", "description", "category", "product_type", "wattage", "lumens", "cct", "voltage"]
+    )
+    perf = normalize_luminaire_performance(product_spec_text)
+    if not perf.has_signal:
+        product_spec_text = " ".join(
+            _text(row.get(key)) for key in ["name", "description", "wattage", "lumens", "cct", "voltage"]
+        )
+        perf = normalize_luminaire_performance(product_spec_text)
     parts = [
-        _product_type_signal(row),
-        _size_signal(text),
+        product_type_override or _product_type_signal(row),
+        _size_signal(product_spec_text),
         perf.user_brightness_target,
         perf.installer_load_target,
         _cct_signal(row),
     ]
-    parts.extend(_feature_signals(text)[:2])
+    parts.extend(_feature_signals(feature_text)[:2])
     return tuple(part for part in parts if part)
 
 
@@ -751,12 +1044,24 @@ def _priority_confidence(score: float, rows: list[dict[str, Any]]) -> tuple[str,
 def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]], limit: int = 16) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
     grow_light_category = _is_grow_light_category(category_name)
+    residential_grow_category = grow_light_category and "residential" in category_name.lower()
+    shop_light_category = category_name.lower().replace("_", " ") == "shop light"
+    emergency_category = category_name.lower().replace("_", " ") == "emergency"
+    striplights_category = category_name.lower().replace("_", " ") == "striplights"
     for row in rows:
         if not _text(row.get("url")) or not _text(row.get("name")):
             continue
         if grow_light_category and not is_grow_light_candidate(row):
             continue
-        signature = _spec_signature(row)
+        if residential_grow_category and not is_residential_grow_light_candidate(row):
+            continue
+        if shop_light_category and not is_shop_light_candidate(row):
+            continue
+        if emergency_category and not is_emergency_candidate(row):
+            continue
+        if striplights_category and not is_striplights_candidate(row):
+            continue
+        signature = _spec_signature(row, product_type_override="Strip/Linear" if striplights_category else "")
         perf = normalize_luminaire_performance(
             " ".join(_text(row.get(key)) for key in ["name", "description", "wattage", "lumens", "cct"])
         )

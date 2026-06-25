@@ -60,6 +60,17 @@ STACKLINE_SEGMENT_OVERRIDES = {
     "panels": ("Ceiling Panel Lights", "Flat Panel Ceiling Lights", "Flat Panels", "2x4 PANEL", "1x4 Flat Panel"),
     "wraparounds": ("Wraparound LED - Broad V2", "Wraparound LED"),
     "ufo": ("UFO High Bays", "UFO High Bay Overview", "UFO Lighting", "UFO"),
+    "linears": (
+        "Linear High Bays",
+        "Linear High Bay Overview",
+        "4ft Linear High Bay",
+        "Linear High Bay Selectable",
+        "Top 25 4ft Linear High Bay",
+        "4ft Linear High Bay Dual Selectable (200W/260W/320W)",
+        "Plug and Play Linear High Bay",
+    ),
+    "shop_light": ("SHOP LIGHT",),
+    "striplights": ("Striplights",),
     "wall_packs": ("Wall Packs", "wall Packs", "White Wall Packs"),
     "commercial_grow_lights": (
         "2FT Backless Grow Light Fixture",
