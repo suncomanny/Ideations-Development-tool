@@ -21,6 +21,8 @@ from .workbook_common import add_or_replace_audit_sheet, clear_row_values, ensur
 
 
 IDEATION_MAX_COL = 54
+SHIPPING_INCLUSIVE_PRE_ADS_GM_TARGET = 0.525
+SHIPPING_INCLUSIVE_PRE_ADS_GM_RANGE = (0.50, 0.55)
 
 
 COLUMN_MAP = {
@@ -235,6 +237,7 @@ def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
     workbook = load_workbook(gap_workbook, data_only=False)
     rows: list[dict[str, Any]] = []
     exact_source_names: set[str] = set()
+    line_review_reference = _best_line_review_reference(workbook)
 
     if "Recommendations" in workbook.sheetnames:
         ws = workbook["Recommendations"]
@@ -252,11 +255,14 @@ def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
                     "classification": "True Gap",
                     "subcategory": record.get("Subcategory"),
                     "name": record.get("Recommendation"),
+                    "priority": record.get("Priority"),
+                    "confidence": record.get("Confidence"),
                     "example": record.get("Competitor / Ecommerce Example"),
                     "url": record.get("Review Link"),
                     "sunco_check": record.get("Sunco Active-Catalog Check"),
                     "why": record.get("Why This Is A True Gap"),
                     "action": record.get("PM Action"),
+                    "_line_review_reference": line_review_reference,
                 })
 
     if "Amazon Recommendations" in workbook.sheetnames:
@@ -275,15 +281,68 @@ def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
                     "classification": classification,
                     "subcategory": record.get("Subcategory"),
                     "name": record.get("Amazon-channel recommendation"),
+                    "priority": record.get("Priority"),
+                    "confidence": record.get("Confidence"),
                     "example": record.get("Example listing"),
                     "url": record.get("Review link"),
                     "sunco_check": record.get("Sunco Amazon coverage check"),
                     "why": record.get("Stackline / Amazon evidence"),
                     "action": record.get("PM action"),
+                    "_line_review_reference": line_review_reference,
                 })
 
     workbook.close()
     return _dedupe_gap_rows(rows)
+
+
+def _to_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = re.sub(r"[^0-9.\-]+", "", str(value))
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _best_line_review_reference(workbook) -> dict[str, Any] | None:
+    if "Existing SKU Line Review" not in workbook.sheetnames:
+        return None
+    ws = workbook["Existing SKU Line Review"]
+    headers = [str(ws.cell(1, col).value or "").strip() for col in range(1, ws.max_column + 1)]
+    candidates: list[dict[str, Any]] = []
+    for row_index in range(2, ws.max_row + 1):
+        record = {
+            headers[col - 1]: ws.cell(row_index, col).value
+            for col in range(1, len(headers) + 1)
+            if headers[col - 1]
+        }
+        sku = str(record.get("Family Part Number") or "").strip()
+        if not sku or sku.startswith("("):
+            continue
+        total_revenue = _to_float(record.get("Total Revenue")) or 0.0
+        status = str(record.get("Active Status") or "").lower()
+        active_score = 1 if "active" in status else 0
+        candidates.append({
+            "sku": sku,
+            "title": record.get("Product Title"),
+            "vendor": record.get("Vendor"),
+            "vendor_cost": _to_float(record.get("Vendor Cost")),
+            "vendor_cost_source": record.get("Vendor Cost Source"),
+            "amazon_revenue": _to_float(record.get("Amazon Revenue")) or 0.0,
+            "shopify_revenue": _to_float(record.get("Shopify Revenue")) or 0.0,
+            "total_revenue": total_revenue,
+            "pack_sizes": record.get("Pack Sizes Available"),
+            "product_url": record.get("Product URL"),
+            "active_score": active_score,
+        })
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item["active_score"], item["total_revenue"]))
 
 
 def _append_unique(existing: str | None, new: str | None) -> str | None:
@@ -319,9 +378,125 @@ def _dedupe_gap_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         existing = deduped[key]
         existing["source"] = _append_unique_source(existing.get("source"), item.get("source"))
-        for field in ["classification", "example", "url", "sunco_check", "why", "action"]:
+        for field in ["classification", "priority", "confidence", "example", "url", "sunco_check", "why", "action"]:
             existing[field] = _append_unique(existing.get(field), item.get(field))
     return list(deduped.values())
+
+
+def _first_match(text: str, pattern: str, flags: int = re.IGNORECASE) -> str | None:
+    match = re.search(pattern, text, flags=flags)
+    return match.group(1).strip() if match else None
+
+
+def _extract_money_values(text: str | None) -> list[float]:
+    values: list[float] = []
+    for match in re.finditer(r"\$([0-9][0-9,]*(?:\.\d{1,2})?)", str(text or "")):
+        value = _to_float(match.group(1))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _competitor_label(item: dict[str, Any]) -> str | None:
+    example = str(item.get("example") or "").strip()
+    if not example:
+        return None
+    label = example.split(":", 1)[0].strip()
+    return label[:90] if label else None
+
+
+def _extract_demand_metrics(item: dict[str, Any]) -> dict[str, Any]:
+    why = str(item.get("why") or "")
+    metrics: dict[str, Any] = {}
+    metrics["overlay_score"] = _first_match(why, r"Product Demand overlay score:\s*([0-9.]+/100)")
+    metrics["score_profile"] = _first_match(why, r"Score profile:\s*([^\n.]+)")
+    metrics["observed_stock_decrease"] = _first_match(why, r"Observed stock decrease totals\s*([0-9,.]+)\s*units")
+    metrics["decrease_events"] = _first_match(why, r"across\s*([0-9,]+)\s*decrease event")
+    metrics["velocity_units_per_week"] = _first_match(why, r"averaging about\s*([0-9,.]+)\s*units/week")
+    metrics["days_since_last_decrease"] = _first_match(why, r"Last decrease was\s*([^\n.]+?)\s*from the latest scrape")
+    metrics["match_quality"] = _first_match(why, r"match quality\s*([0-9]+(?:\.[0-9]+)?)")
+    metrics["stackline_sales"] = _first_match(why, r"Live Redshift Stackline Atlas found\s*(\$[0-9,]+)\s*retail sales")
+    metrics["stackline_units"] = _first_match(why, r"retail sales and\s*([0-9,]+)\s*units")
+    metrics["stackline_weeks"] = _first_match(why, r"across\s*([0-9,]+)\s*week")
+    metrics["stackline_asp"] = _first_match(why, r"Average observed retail price\s*(\$[0-9][0-9,]*(?:\.\d{1,2})?)")
+    metrics["stackline_segment"] = _first_match(why, r"Segment:\s*([^\n.]+)")
+    metrics["searched_terms"] = _first_match(why, r"Searched/customer terms:\s*([^\n.]+)")
+    return {key: value for key, value in metrics.items() if value not in (None, "")}
+
+
+def _priority_channels_from_evidence(item: dict[str, Any], metrics: dict[str, Any]) -> str | None:
+    profile = str(metrics.get("score_profile") or "").lower()
+    source = str(item.get("source") or "").lower()
+    if "amazon" in profile or "stackline" in profile or source == "amazon":
+        return "Amazon first; Shopify parity review if Sunco.com assortment coverage is incomplete."
+    if "shopify" in profile or "ecommerce" in profile or "ecommerce" in source:
+        return "Shopify/front-end launch review first; Amazon follow-up if Stackline and pack economics support."
+    return None
+
+
+def _stackline_or_demand_summary(item: dict[str, Any], metrics: dict[str, Any]) -> str | None:
+    if metrics.get("stackline_sales"):
+        pieces = [
+            f"Stackline/Amazon demand: {metrics.get('stackline_sales')} retail sales",
+            f"{metrics.get('stackline_units')} units" if metrics.get("stackline_units") else None,
+            f"{metrics.get('stackline_weeks')} weeks" if metrics.get("stackline_weeks") else None,
+            f"ASP {metrics.get('stackline_asp')}" if metrics.get("stackline_asp") else None,
+            f"segment {metrics.get('stackline_segment')}" if metrics.get("stackline_segment") else None,
+            f"overlay score {metrics.get('overlay_score')}" if metrics.get("overlay_score") else None,
+        ]
+        return "; ".join(part for part in pieces if part) + "."
+    if metrics.get("observed_stock_decrease") or metrics.get("velocity_units_per_week"):
+        pieces = [
+            f"Ecommerce movement: {metrics.get('observed_stock_decrease')} units observed stock decrease" if metrics.get("observed_stock_decrease") else "Ecommerce movement signal",
+            f"{metrics.get('decrease_events')} decrease events" if metrics.get("decrease_events") else None,
+            f"~{metrics.get('velocity_units_per_week')} units/week" if metrics.get("velocity_units_per_week") else None,
+            f"last decrease {metrics.get('days_since_last_decrease')} from latest scrape" if metrics.get("days_since_last_decrease") else None,
+            f"match quality {metrics.get('match_quality')}" if metrics.get("match_quality") else None,
+            f"overlay score {metrics.get('overlay_score')}" if metrics.get("overlay_score") else None,
+        ]
+        return "; ".join(part for part in pieces if part) + "."
+    return None
+
+
+def _line_review_reference_text(reference: dict[str, Any]) -> str:
+    parts = [
+        "Best-selling adjacent active Sunco family by category revenue from Step 1 Existing SKU Line Review",
+        str(reference.get("sku") or "").strip(),
+    ]
+    title = str(reference.get("title") or "").strip()
+    if title:
+        parts.append(title)
+    revenue_bits = [
+        f"total {_format_money(float(reference.get('total_revenue') or 0))}",
+        f"Shopify {_format_money(float(reference.get('shopify_revenue') or 0))}",
+        f"Amazon {_format_money(float(reference.get('amazon_revenue') or 0))}",
+    ]
+    parts.append(" / ".join(revenue_bits))
+    if reference.get("pack_sizes"):
+        parts.append(f"pack sizes {reference.get('pack_sizes')}")
+    if reference.get("vendor_cost") is not None:
+        parts.append(f"vendor cost {_format_money(float(reference.get('vendor_cost')))}")
+    return "; ".join(part for part in parts if part)
+
+
+def _sunco_reference_from_coverage(item: dict[str, Any]) -> dict[str, str] | None:
+    check = str(item.get("sunco_check") or "")
+    if not check or "0 strong" in check.lower():
+        return None
+    match = re.search(
+        r"(?:Partial Sunco active coverage found[^:]*:\s*)?([A-Z0-9][A-Z0-9_./-]{2,}):\s*([^\n.]+)",
+        check,
+    )
+    if not match:
+        return None
+    sku = match.group(1).strip()
+    title = match.group(2).strip()
+    if sku.lower() in {"active", "amazon", "shopify"}:
+        return None
+    return {
+        "sku": sku,
+        "source": f"Closest Sunco active-catalog coverage named in Step 1: {sku}; {title}",
+    }
 
 
 def _strategy_from_classification(value: str | None) -> str:
@@ -403,6 +578,18 @@ def _extract_panel_size_tokens(text: str) -> list[str]:
     return values
 
 
+def _extract_linear_size_tokens(text: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(r"\b(?:2|3|4|5|6|8)\s*(?:ft|foot|feet)\b", text, flags=re.IGNORECASE):
+        number = re.search(r"\d+", match.group(0))
+        if not number:
+            continue
+        value = f"{number.group(0)} ft"
+        if value not in values:
+            values.append(value)
+    return values
+
+
 def _extract_wattage_text(text: str) -> str | None:
     values: list[str] = []
     for match in re.finditer(r"\b\d+(?:\.\d+)?\s*W\b", text, flags=re.IGNORECASE):
@@ -421,10 +608,26 @@ def _extract_wattage_text(text: str) -> str | None:
 
 
 def _extract_lumens_text(text: str) -> str | None:
+    def collect(pattern: str) -> list[str]:
+        values: list[str] = []
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            trailing = text[match.end(): match.end() + 8]
+            if re.match(r"\s*/\s*w", trailing, flags=re.IGNORECASE):
+                continue
+            numeric = _to_float(match.group(1))
+            if numeric is None or numeric < 300 or numeric > 200000:
+                continue
+            value = f"{numeric:,.0f}lm" if numeric.is_integer() else f"{numeric:,.1f}lm"
+            if value not in values:
+                values.append(value)
+        return values
+
+    target_values = collect(r"brightness target\s+([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b")
+    if target_values:
+        return " / ".join(target_values[:4]) + " target from Step 1 evidence"
+
     values: list[str] = []
-    for match in re.finditer(r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*(?:lm|lumens)\b", text, flags=re.IGNORECASE):
-        value = re.sub(r"\s+", " ", match.group(0)).strip()
-        value = re.sub(r"\blm\b", "lumens", value, flags=re.IGNORECASE)
+    for value in collect(r"\b([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b"):
         if value not in values:
             values.append(value)
     if not values:
@@ -471,9 +674,22 @@ def _infer_integrated_form_factor(item: dict[str, Any], text: str) -> str:
     lowered = text.lower()
     pieces: list[str] = []
     sizes = _extract_panel_size_tokens(text)
+    linear_sizes = _extract_linear_size_tokens(text)
     if sizes:
         pieces.append("/".join(sizes))
-    if "center basket" in lowered:
+    if "vapor tight" in lowered or "vaportight" in lowered or "vapor proof" in lowered:
+        pieces.extend(linear_sizes[:2])
+        pieces.append("LED vapor tight fixture")
+    elif "wraparound" in lowered or "wrap around" in lowered:
+        pieces.extend(linear_sizes[:2])
+        pieces.append("LED wraparound fixture")
+    elif "strip light" in lowered or "striplight" in lowered:
+        pieces.extend(linear_sizes[:2])
+        pieces.append("LED strip light")
+    elif "linear high bay" in lowered:
+        pieces.extend(linear_sizes[:2])
+        pieces.append("linear high bay")
+    elif "center basket" in lowered:
         pieces.append("center basket troffer")
     elif "troffer" in lowered:
         pieces.append("troffer")
@@ -649,6 +865,41 @@ def _format_money(value: float) -> str:
     return f"${value:,.2f}"
 
 
+def _target_vendor_cost_from_margin(enriched: dict[str, Any], target_msrp: float) -> dict[str, Any] | None:
+    margin_pct = SHIPPING_INCLUSIVE_PRE_ADS_GM_TARGET * 100
+    floor_cost = target_msrp * (1 - SHIPPING_INCLUSIVE_PRE_ADS_GM_RANGE[1])
+    ceiling_cost = target_msrp * (1 - SHIPPING_INCLUSIVE_PRE_ADS_GM_RANGE[0])
+    target_cost = round(target_msrp * (1 - SHIPPING_INCLUSIVE_PRE_ADS_GM_TARGET), 2)
+    return {
+        "target": target_cost,
+        "notes": (
+            f"Target vendor cost basis: shipping-inclusive landed cost ceiling backsolved from target MSRP "
+            f"{_format_money(target_msrp)} using the midpoint of the 50-55% pre-ads gross margin policy "
+            f"({margin_pct:.1f}%). Acceptable landed-cost band for that policy is "
+            f"{_format_money(floor_cost)}-{_format_money(ceiling_cost)}."
+        ),
+    }
+
+
+def _numeric_pricing_cell(value: Any) -> float | int | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return round(value, 2)
+    prices = _extract_money_values(str(value))
+    if prices:
+        return round(prices[0], 2)
+    stripped = str(value).strip().replace(",", "")
+    try:
+        return round(float(stripped), 2)
+    except ValueError:
+        return None
+
+
 def _market_msrp_target(item: dict[str, Any], market_samples: list[dict[str, Any]]) -> dict[str, Any] | None:
     matched_samples = [
         sample for sample in _market_samples_for_item(item, market_samples)
@@ -683,7 +934,7 @@ def _market_msrp_target(item: dict[str, Any], market_samples: list[dict[str, Any
         if sample.get("url")
     ]
     return {
-        "target": target,
+        "target": round(target, 2),
         "text": (
             f"{_format_money(target)} market MSRP target; based on p50-p55 of {pricing_basis} "
             f"({_format_money(p50)}-{_format_money(p55)}). Use live pricing before launch."
@@ -694,6 +945,28 @@ def _market_msrp_target(item: dict[str, Any], market_samples: list[dict[str, Any
         ),
         "notes": f"Market MSRP pricing basis: {pricing_basis}. Samples: " + "; ".join(sample_labels),
         "links": "\n".join(sample_links),
+    }
+
+
+def _market_msrp_target_from_step1(item: dict[str, Any]) -> dict[str, Any] | None:
+    prices = _extract_money_values(str(item.get("example") or ""))
+    if not prices:
+        return None
+    observed = prices[-1]
+    label = _competitor_label(item) or "Step 1 competitor listing"
+    url = str(item.get("url") or "").strip()
+    return {
+        "target": round(observed, 2),
+        "text": (
+            f"{_format_money(observed)} provisional market MSRP anchor from Step 1 competitor listing; "
+            "use broader p50-p55 market pricing when refreshed comps are available."
+        ),
+        "vendor_cost_text": (
+            f"Backsolve from provisional market MSRP anchor {_format_money(observed)} after quote refresh; "
+            "do not use margin targets as the initial MSRP anchor."
+        ),
+        "notes": f"Market MSRP fallback basis: {label} observed at {_format_money(observed)} in Step 1 evidence.",
+        "links": f"{label}: {url}" if url else "",
     }
 
 
@@ -817,6 +1090,8 @@ def _build_research_notes(
     notes = [
         f"Source: {item.get('source')}",
         f"Classification: {item.get('classification')}",
+        f"Demand summary: {enriched.get('stackline_data')}" if enriched.get("stackline_data") else None,
+        f"Priority channel rationale: {enriched.get('priority_channels')}" if enriched.get("priority_channels") else None,
         f"Parent opportunity: {item.get('_parent_opportunity')}" if item.get("_parent_opportunity") else None,
         f"SKU candidate target: {item.get('_target_light_count')}-light; size target {item.get('_target_size')}" if item.get("_target_light_count") else None,
         f"SKU candidate target: {item.get('_target_pack_count')}-pack kit" if item.get("_target_pack_count") else None,
@@ -832,6 +1107,9 @@ def _build_research_notes(
     if profile.get("notes"):
         notes.append(f"Profile note: {profile.get('notes')}")
     if pricing:
+        notes.append(f"Target MSRP basis: {pricing['text']}")
+        if pricing.get("vendor_cost_notes"):
+            notes.append(pricing["vendor_cost_notes"])
         notes.append(pricing["notes"])
         if pricing.get("links"):
             notes.append("Market pricing links:\n" + pricing["links"])
@@ -864,7 +1142,8 @@ def _enrich_item(
     bulb_base = _extract_bulb_bases(text)
     light_count = _extract_light_count(text)
     is_decorative = _is_decorative_profile(category, profile)
-    pricing = _market_msrp_target(item, market_samples)
+    metrics = _extract_demand_metrics(item)
+    pricing = _market_msrp_target(item, market_samples) or _market_msrp_target_from_step1(item)
     link_validation = format_validation_notes(validate_urls(extract_urls(item.get("url")), url_validation_cache))
     enriched = {
         "category": category.run_name,
@@ -876,6 +1155,20 @@ def _enrich_item(
         "known_competitors": _build_known_competitors(item),
     }
     enriched.update(defaults)
+    coverage_reference = _sunco_reference_from_coverage(item)
+    line_review_reference = item.get("_line_review_reference") or {}
+    if coverage_reference:
+        enriched["sunco_reference_sku"] = coverage_reference["sku"]
+        enriched["reference_sku_source"] = coverage_reference["source"]
+    elif line_review_reference.get("sku"):
+        enriched["sunco_reference_sku"] = line_review_reference["sku"]
+        enriched["reference_sku_source"] = _line_review_reference_text(line_review_reference)
+    priority_channels = _priority_channels_from_evidence(item, metrics)
+    if priority_channels:
+        enriched["priority_channels"] = priority_channels
+    demand_summary = _stackline_or_demand_summary(item, metrics)
+    if demand_summary:
+        enriched["stackline_data"] = demand_summary
 
     if is_decorative:
         enriched["size_form_factor"] = _infer_size_form_factor(item, text)
@@ -926,11 +1219,20 @@ def _enrich_item(
         enriched["bulb_base_type"] = None
         enriched["bulb_shape"] = None
     if pricing:
-        enriched["target_msrp"] = pricing["text"]
-        enriched["target_vendor_cost"] = pricing["vendor_cost_text"]
+        target_msrp = round(float(pricing["target"]), 2)
+        enriched["target_msrp"] = target_msrp
+        enriched["target_margin_shopify"] = SHIPPING_INCLUSIVE_PRE_ADS_GM_TARGET * 100
+        enriched["target_margin_amazon"] = SHIPPING_INCLUSIVE_PRE_ADS_GM_TARGET * 100
+        enriched["cost_type"] = "Landed"
+        vendor_cost = _target_vendor_cost_from_margin(enriched, target_msrp)
+        if vendor_cost:
+            enriched["target_vendor_cost"] = vendor_cost["target"]
+            pricing["vendor_cost_notes"] = vendor_cost["notes"]
     for key, value in dict(item.get("_field_overrides") or {}).items():
         if key in COLUMN_MAP and value:
             enriched[key] = value
+    enriched["target_msrp"] = _numeric_pricing_cell(enriched.get("target_msrp"))
+    enriched["target_vendor_cost"] = _numeric_pricing_cell(enriched.get("target_vendor_cost"))
     enriched["research_notes"] = _build_research_notes(item, enriched, profile, pricing, link_validation)
     enriched["_link_validation"] = link_validation
     return enriched
@@ -1007,7 +1309,8 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
                     )
                 ),
                 " | ".join(part for part in evidence_parts if part),
-                "Use Sunco.com/Shopify SKU first when available; otherwise refresh should use best-selling item by category revenue.",
+                enriched.get("reference_sku_source")
+                or "Use Sunco.com/Shopify SKU first when available; otherwise use best-selling item by category revenue.",
             ])
             for cell in mapping[mapping.max_row]:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
