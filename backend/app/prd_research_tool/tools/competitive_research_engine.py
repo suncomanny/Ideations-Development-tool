@@ -46,6 +46,17 @@ DEFAULT_DIRECT_COMPETITORS = [
     "NSL USA",
 ]
 
+KNOWN_COMPETITOR_BRAND_HINTS = [
+    "LED Lighting Supply",
+    "1000Bulbs",
+    "Duralec",
+    "Amico",
+    "NuWatt",
+    "Maxxima",
+    "NSL USA",
+    "PLT",
+]
+
 CHANNEL_DOMAINS = {
     "amazon": "amazon.com",
     "home_depot": "homedepot.com",
@@ -145,6 +156,34 @@ def normalize_text(value: Any) -> str | None:
     if isinstance(value, bool):
         return "Yes" if value else "No"
     text = str(value).strip()
+    return text or None
+
+
+def search_term_text(value: Any) -> str | None:
+    """Convert PRD-safe values into compact search terms."""
+    text = normalize_text(value)
+    if not text:
+        return None
+    text = " ".join(text.split())
+    lowered = text.lower()
+    if lowered in {"cct target", "mounting type by selected product form factor"}:
+        return None
+    if any(
+        phrase in lowered
+        for phrase in [
+            "by selected product form factor",
+            "supplier file",
+            "supplier options",
+            "file availability",
+        ]
+    ):
+        return None
+    text = re.split(
+        r"\btarget from step 1 evidence\b|\bfrom step 1 evidence\b|\bunless\b|\bvalidate\b|\bconfirm\b",
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip(" ,.-")
     return text or None
 
 
@@ -300,17 +339,17 @@ def bool_feature(label: str, value: Any) -> str | None:
 
 def format_wattage(value: Any) -> str | None:
     """Format wattage terms for search."""
-    text = normalize_text(value)
+    text = search_term_text(value)
     if not text:
         return None
-    if text.lower().endswith("w"):
+    if re.search(r"\b\d+(?:\.\d+)?\s*(?:w|watt|watts)\b", text, flags=re.IGNORECASE):
         return text
     return f"{text}W"
 
 
 def format_lumens(value: Any) -> str | None:
     """Format lumen terms for search."""
-    text = normalize_text(value)
+    text = search_term_text(value)
     if not text:
         return None
     lowered = text.lower()
@@ -321,17 +360,18 @@ def format_lumens(value: Any) -> str | None:
 
 def format_cct(value: Any) -> str | None:
     """Format CCT terms for search."""
-    text = normalize_text(value)
+    text = search_term_text(value)
     if not text:
         return None
-    if text.lower().endswith("k"):
+    lowered = text.lower()
+    if "cct" in lowered or re.search(r"\b\d{4}\s*k\b", text, flags=re.IGNORECASE):
         return text
     return f"{text}K"
 
 
 def format_cri(value: Any) -> str | None:
     """Format CRI terms for search."""
-    text = normalize_text(value)
+    text = search_term_text(value)
     if not text:
         return None
     if "cri" in text.lower():
@@ -359,6 +399,42 @@ def is_placeholder_or_guidance(value: str | None) -> bool:
     if any(phrase in lowered for phrase in ["bulb-dependent", "supplier file", "file availability"]):
         return True
     return False
+
+
+def brand_from_known_competitor_hint(value: Any) -> str | None:
+    """Extract a brand name from Step 1 competitor snippets."""
+    text = normalize_text(value)
+    if not text:
+        return None
+    text = " ".join(text.split())
+    lowered = text.lower()
+
+    for brand in KNOWN_COMPETITOR_BRAND_HINTS:
+        if brand.lower() in lowered:
+            return brand
+
+    domain_map = {
+        "1000bulbs.com": "1000Bulbs",
+        "ledlightingsupply.com": "LED Lighting Supply",
+        "amazon.com": None,
+        "homedepot.com": None,
+        "lowes.com": None,
+        "walmart.com": None,
+    }
+    for domain, brand in domain_map.items():
+        if domain in lowered:
+            return brand
+
+    label = text.split(":", 1)[0].strip(" ,.-")
+    label = re.sub(r"\b(?:SKU|Item|Model)\b.*$", "", label, flags=re.IGNORECASE).strip(" ,.-")
+    words = label.split()
+    if not words:
+        return None
+    if re.fullmatch(r"[\d$./|-]+", words[0]):
+        return None
+    if re.search(r"\b(?:lumen|lumens|watt|kelvin|instock|pack|ft|inch)\b", label, flags=re.IGNORECASE):
+        return None
+    return " ".join(words[:3])
 
 
 def first_instruction_clause(value: str) -> str:
@@ -626,9 +702,9 @@ def build_query_terms(ideation: dict[str, Any]) -> dict[str, list[str]]:
     feature_terms = build_feature_watchlist(ideation)
     strict_terms = unique_preserve_order(
         [
-            normalize_text(identity.get("subcategory")),
-            normalize_text(physical.get("size_form_factor")),
-            normalize_text(physical.get("mounting_type")),
+            search_term_text(identity.get("subcategory")),
+            search_term_text(physical.get("size_form_factor")),
+            search_term_text(physical.get("mounting_type")),
             format_wattage(electrical.get("wattage_primary")),
             format_lumens(electrical.get("lumens_target")),
             format_cct(electrical.get("cct_primary")),
@@ -638,8 +714,8 @@ def build_query_terms(ideation: dict[str, Any]) -> dict[str, list[str]]:
     )
     relaxed_terms = unique_preserve_order(
         [
-            normalize_text(identity.get("subcategory")),
-            normalize_text(physical.get("size_form_factor")),
+            search_term_text(identity.get("subcategory")),
+            search_term_text(physical.get("size_form_factor")),
             format_wattage(electrical.get("wattage_primary")),
             format_cct(electrical.get("cct_primary")),
             *feature_terms[:2],
@@ -647,9 +723,9 @@ def build_query_terms(ideation: dict[str, Any]) -> dict[str, list[str]]:
     )
     named_terms = unique_preserve_order(
         [
-            truncate_words(normalize_text(identity.get("ideation_name"))),
-            normalize_text(identity.get("subcategory")),
-            normalize_text(physical.get("size_form_factor")),
+            truncate_words(search_term_text(identity.get("ideation_name"))),
+            search_term_text(identity.get("subcategory")),
+            search_term_text(physical.get("size_form_factor")),
             format_wattage(electrical.get("wattage_primary")),
         ]
     )
@@ -704,7 +780,7 @@ def build_brand_watchlist(ideation: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     for brand in research.get("known_competitors_list") or []:
-        add_brand(brand, "workbook_known_competitor", "high")
+        add_brand(brand_from_known_competitor_hint(brand), "workbook_known_competitor", "high")
 
     for performance in performance_contexts:
         for brand in performance.get("estimation_inputs", {}).get("top_brands", []):
