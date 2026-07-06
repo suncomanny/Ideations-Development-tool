@@ -673,14 +673,29 @@ def _candidate_report_paths(session_root: Path) -> list[Path]:
     return [path for path in files if path.is_file() and not path.name.startswith("~$")]
 
 
-def publish_combined_report(paths: ProjectPaths, session_root: Path) -> list[Path]:
+def _preferred_publish_report_paths(session_root: Path) -> list[Path]:
+    """Return the user-facing Step 3 workbooks to publish for a session."""
+    reports_dir = session_root / "reports"
+    preferred = [
+        reports_dir / f"{session_root.name}_completed_rows.xlsx",
+    ]
+    existing = [path for path in preferred if path.exists() and path.is_file()]
+    if existing:
+        return existing
     reports = _candidate_report_paths(session_root)
+    if not reports:
+        return []
+    return sorted(reports, key=lambda p: p.stat().st_size, reverse=True)[:1]
+
+
+def publish_combined_report(paths: ProjectPaths, session_root: Path) -> list[Path]:
+    reports = _preferred_publish_report_paths(session_root)
     if not reports:
         return []
 
     paths.research_report_outputs.mkdir(parents=True, exist_ok=True)
     published: list[Path] = []
-    for report in sorted(reports, key=lambda p: p.stat().st_size, reverse=True)[:1]:
+    for report in reports:
         destination = paths.research_report_outputs / report.name
         if destination.exists():
             destination = paths.research_report_outputs / f"{report.stem}_{timestamp()}{report.suffix}"
