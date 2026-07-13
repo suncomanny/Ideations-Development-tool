@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,115 @@ from research_session_manager import (
 )
 from sharepoint_publish import publish_session_reports
 from template_parser import DEFAULT_WORKBOOK
+
+
+ALLOW_LEGACY_LOCAL_SOURCES_ENV = "PRD_RESEARCH_ALLOW_LEGACY_LOCAL_SOURCES"
+SOURCE_POLICY_EXTENSIONS = {".json", ".md", ".txt", ".csv"}
+SOURCE_POLICY_FORBIDDEN_MARKERS = (
+    "legacy_fy2025",
+    "legacy_local",
+    "legacy_metadata",
+    "legacy fallback",
+    "legacy_fallback",
+    "legacy fy2025",
+    "local historical sales fallback",
+    "legacy_fy2025_amazon_export_fallback",
+    "legacy_fy2025_shopify_sales_csv",
+    "legacy_fy2025_amazon_sales_csv",
+    "legacy_metadata_variant_price",
+    "legacy_local_metadata_and_fy2025_sales_exports",
+    "local_metadata_image_only",
+    "claude workbook",
+    "sunco all metadata",
+    "full sunco",
+    "full nsl",
+    "2025 all sales",
+    "category_intelligence_sqlite",
+    "redshift_then_local_csv",
+    '"source_system": "local_csv"',
+    '"source_system":"local_csv"',
+)
+
+
+def env_flag(name: str) -> bool:
+    """Return True when an environment flag is explicitly enabled."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "y"}
+
+
+def short_excerpt(text: str, index: int, radius: int = 90) -> str:
+    """Return a compact one-line excerpt around a source-policy hit."""
+    start = max(0, index - radius)
+    end = min(len(text), index + radius)
+    excerpt = text[start:end].replace("\r", " ").replace("\n", " ")
+    return " ".join(excerpt.split())
+
+
+def audit_session_source_policy(
+    session_root: Path,
+    *,
+    fail_on_forbidden: bool = True,
+    max_hits: int = 30,
+) -> dict[str, Any]:
+    """Scan Step 3 session artifacts for forbidden legacy/local source markers."""
+    checked_files = 0
+    hits: list[dict[str, str]] = []
+    session_root = session_root.resolve()
+
+    if not session_root.exists():
+        return {
+            "session_root": str(session_root),
+            "checked_file_count": 0,
+            "forbidden_hit_count": 0,
+            "hits": [],
+            "status": "missing_session_root",
+        }
+
+    for path in session_root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in SOURCE_POLICY_EXTENSIONS:
+            continue
+        checked_files += 1
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        lowered = text.lower()
+        for marker in SOURCE_POLICY_FORBIDDEN_MARKERS:
+            index = lowered.find(marker)
+            if index < 0:
+                continue
+            hits.append(
+                {
+                    "file": str(path.relative_to(session_root)),
+                    "marker": marker,
+                    "excerpt": short_excerpt(text, index),
+                }
+            )
+            if len(hits) >= max_hits:
+                break
+        if len(hits) >= max_hits:
+            break
+
+    result = {
+        "session_root": str(session_root),
+        "checked_file_count": checked_files,
+        "forbidden_hit_count": len(hits),
+        "hits": hits,
+        "status": "failed" if hits else "passed",
+    }
+    if hits and fail_on_forbidden:
+        sample = "; ".join(f"{hit['file']} [{hit['marker']}]" for hit in hits[:5])
+        raise SystemExit(
+            "Step 3 source policy failed: forbidden legacy/local source markers were found. "
+            f"Refresh Postgres/Redshift-backed payloads or rerun without local fallbacks. Examples: {sample}"
+        )
+    return result
+
+
+def source_policy_fail_enabled(allow_legacy_local_sources: bool = False) -> bool:
+    """Return whether Step 3 should fail when legacy/local sources are detected."""
+    if allow_legacy_local_sources:
+        return False
+    return not env_flag(ALLOW_LEGACY_LOCAL_SOURCES_ENV)
 
 
 
@@ -263,7 +373,6 @@ def command_prepare(args: argparse.Namespace) -> dict[str, Any]:
         include_stackline_raw=args.include_stackline_raw,
         start_date=args.start_date,
         end_date=args.end_date,
-        stackline_folder=args.stackline_folder,
         stackline_brand=args.stackline_brand,
         sheet_name=args.sheet,
     )
@@ -293,12 +402,18 @@ def command_prepare(args: argparse.Namespace) -> dict[str, Any]:
         if args.apply_local_family_fallback and family_queries:
             local_family_fallback = apply_local_family_fallback(Path(family_queries["payload_file"]))
 
+    source_policy_audit = audit_session_source_policy(
+        session_root,
+        fail_on_forbidden=source_policy_fail_enabled(args.allow_legacy_local_sources),
+    )
+
     return {
         "mode": "prepare",
         "init": init_result,
         "reference_queries": reference_queries,
         "family_queries": family_queries,
         "local_family_fallback": local_family_fallback,
+        "source_policy_audit": source_policy_audit,
         "status": session_status(str(session_root), limit=args.limit),
     }
 
@@ -330,9 +445,13 @@ def command_refresh(args: argparse.Namespace) -> dict[str, Any]:
         include_stackline_raw=args.include_stackline_raw,
         start_date=args.start_date,
         end_date=args.end_date,
-        stackline_folder=args.stackline_folder,
         stackline_brand=args.stackline_brand,
         sheet_name=context["sheet_name"],
+    )
+
+    pre_finalize_source_policy_audit = audit_session_source_policy(
+        Path(init_result["session_root"]).resolve(),
+        fail_on_forbidden=source_policy_fail_enabled(args.allow_legacy_local_sources),
     )
 
     finalize_result = finalize_session(
@@ -347,17 +466,27 @@ def command_refresh(args: argparse.Namespace) -> dict[str, Any]:
         publish_combined_name=args.publish_combined_name,
         publish_row_reports_subdir=args.publish_row_reports_subdir,
     )
+    source_policy_audit = audit_session_source_policy(
+        Path(init_result["session_root"]).resolve(),
+        fail_on_forbidden=source_policy_fail_enabled(args.allow_legacy_local_sources),
+    )
 
     return {
         "mode": "refresh",
         "local_family_fallback": local_family_fallback,
+        "pre_finalize_source_policy_audit": pre_finalize_source_policy_audit,
         "init": init_result,
         "finalize": finalize_result,
+        "source_policy_audit": source_policy_audit,
     }
 
 
 def command_finalize(args: argparse.Namespace) -> dict[str, Any]:
     """Run the downstream post-collection pipeline for a session."""
+    pre_finalize_source_policy_audit = audit_session_source_policy(
+        Path(args.session_root).resolve(),
+        fail_on_forbidden=source_policy_fail_enabled(args.allow_legacy_local_sources),
+    )
     result = finalize_session(
         args.session_root,
         rows=parse_rows_argument(args.rows),
@@ -370,7 +499,16 @@ def command_finalize(args: argparse.Namespace) -> dict[str, Any]:
         publish_combined_name=args.publish_combined_name,
         publish_row_reports_subdir=args.publish_row_reports_subdir,
     )
-    return {"mode": "finalize", **result}
+    source_policy_audit = audit_session_source_policy(
+        Path(args.session_root).resolve(),
+        fail_on_forbidden=source_policy_fail_enabled(args.allow_legacy_local_sources),
+    )
+    return {
+        "mode": "finalize",
+        "pre_finalize_source_policy_audit": pre_finalize_source_policy_audit,
+        "finalize": result,
+        "source_policy_audit": source_policy_audit,
+    }
 
 
 def command_publish(args: argparse.Namespace) -> dict[str, Any]:
@@ -427,11 +565,11 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--monthly-end-date", default=None, help="Override family-metrics monthly-sales end date.")
     prepare.add_argument("--customer-start-date", default=None, help="Override family-metrics customer-concentration start date.")
     prepare.add_argument("--customer-end-date", default=None, help="Override family-metrics customer-concentration end date.")
-    prepare.add_argument("--stackline-folder", default=None, help="Override Stackline export folder.")
     prepare.add_argument("--stackline-brand", default="Sunco Lighting", help="Internal brand name for Stackline.")
     prepare.add_argument("--skip-reference-queries", action="store_true", help="Do not generate reference Postgres query bundle files.")
     prepare.add_argument("--skip-family-queries", action="store_true", help="Do not generate family-metrics Postgres query bundle files.")
     prepare.add_argument("--apply-local-family-fallback", action="store_true", help="Apply the local Amazon family-metrics fallback to the generated family payload template.")
+    prepare.add_argument("--allow-legacy-local-sources", action="store_true", help="Development-only: allow Step 3 artifacts with legacy/local source markers.")
     prepare.add_argument("--limit", type=int, default=5, help="How many next collection tasks to include in the summary.")
 
     refresh = subparsers.add_parser(
@@ -450,11 +588,11 @@ def build_parser() -> argparse.ArgumentParser:
     refresh.add_argument("--postgres-json", default=None, help="Reference-baseline payload JSON. Defaults to session_root\\reference_postgres_payload_template.json.")
     refresh.add_argument("--family-metrics-json", default=None, help="Family-metrics payload JSON. Defaults to session_root\\family_metrics_payload_template.json.")
     refresh.add_argument("--apply-local-family-fallback", action="store_true", help="Apply the local Amazon family-metrics fallback before refresh if a family payload file exists.")
+    refresh.add_argument("--allow-legacy-local-sources", action="store_true", help="Development-only: allow Step 3 artifacts with legacy/local source markers.")
     refresh.add_argument("--include-queries", action="store_true", help="Embed MCP query templates in packets.")
     refresh.add_argument("--include-stackline-raw", action="store_true", help="Embed full Stackline analysis in packets.")
     refresh.add_argument("--start-date", default=None, help="Override reference-baseline sales-window start date.")
     refresh.add_argument("--end-date", default=None, help="Override reference-baseline sales-window end date.")
-    refresh.add_argument("--stackline-folder", default=None, help="Override Stackline export folder.")
     refresh.add_argument("--stackline-brand", default="Sunco Lighting", help="Internal brand name for Stackline.")
     refresh.add_argument("--rows", default=None, help="Optional comma-separated row numbers for downstream steps.")
     refresh.add_argument("--skip-price-enrichment", action="store_true", help="Skip the post-collection price enrichment pass.")
@@ -475,6 +613,7 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("--skip-price-enrichment", action="store_true", help="Skip the post-collection price enrichment pass.")
     finalize.add_argument("--skip-combined", action="store_true", help="Skip rebuilding the combined workbook.")
     finalize.add_argument("--allow-invalid-raw", action="store_true", help="Continue even if raw validation still reports invalid artifacts.")
+    finalize.add_argument("--allow-legacy-local-sources", action="store_true", help="Development-only: allow Step 3 artifacts with legacy/local source markers.")
     finalize.add_argument("--publish-sharepoint", action="store_true", help="Publish the completed workbook into the synced SharePoint reports folder after finalize.")
     finalize.add_argument("--publish-destination-root", default=None, help="Override the synced SharePoint reports folder used when publishing.")
     finalize.add_argument("--publish-include-row-reports", action="store_true", help="Also publish row-level reports when SharePoint publishing is enabled.")

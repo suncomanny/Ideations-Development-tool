@@ -229,6 +229,36 @@ def is_search_results_url(url: str | None) -> bool:
     return False
 
 
+def suspect_product_url_reason(url: str | None, source_channel: str | None) -> str | None:
+    """Return a reason when a product URL appears synthesized or channel-invalid."""
+    if not url or "://" not in url:
+        return None
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().replace("www.", "")
+    path = parsed.path.strip("/")
+    parts = [part for part in path.split("/") if part]
+    channel = normalize_text(source_channel)
+
+    if (channel == "amazon" or host.endswith("amazon.com")) and len(parts) >= 2 and parts[0].lower() in {"dp", "gp"}:
+        candidate = parts[-1]
+        if not re.fullmatch(r"[A-Z0-9]{10}", candidate.upper()):
+            return "Amazon product URL does not contain a valid ASIN."
+
+    if channel == "home_depot" or host.endswith("homedepot.com"):
+        if len(parts) >= 2 and parts[0].lower() == "p":
+            last_part = parts[-1]
+            if re.fullmatch(r"[A-Z0-9]{10}", last_part.upper()):
+                return "Home Depot product URL appears to use an Amazon ASIN."
+            if len(parts) == 2 and not re.fullmatch(r"\d{6,}", last_part):
+                return "Home Depot product URL appears to be a synthetic non-item URL."
+
+    if channel == "walmart" or host.endswith("walmart.com"):
+        if len(parts) >= 2 and parts[0].lower() == "ip" and not re.fullmatch(r"\d{6,}", parts[-1]):
+            return "Walmart product URL does not contain a numeric item ID."
+
+    return None
+
+
 def classify_verification(
     *,
     raw_source_channel: str | None,
@@ -267,6 +297,10 @@ def classify_verification(
 
     if is_search_results_url(url):
         reasons.append("Linked URL is a search/discovery page rather than a direct product detail page.")
+
+    suspect_reason = suspect_product_url_reason(url, effective_channel)
+    if suspect_reason:
+        reasons.append(suspect_reason)
 
     note_text = " ".join(
         [
@@ -611,8 +645,16 @@ def merge_records(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, A
     incoming_status = normalize_text(incoming.get("verification_status")) or "verified_listing"
     base_reason = normalize_text(base.get("verification_reason"))
     incoming_reason = normalize_text(incoming.get("verification_reason"))
+    result_url_issue = suspect_product_url_reason(
+        normalize_text(result.get("url")),
+        normalize_text(result.get("source_channel")),
+    )
 
-    if "verified_listing" in {base_status, incoming_status}:
+    if result_url_issue:
+        result["verification_status"] = "inferred_competitor"
+        reasons = unique_preserve_order([reason for reason in [base_reason, incoming_reason, result_url_issue] if reason])
+        result["verification_reason"] = " ".join(reasons)
+    elif "verified_listing" in {base_status, incoming_status}:
         result["verification_status"] = "verified_listing"
         result["verification_reason"] = (
             base_reason if base_status == "verified_listing" else incoming_reason

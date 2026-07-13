@@ -13,16 +13,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
 
-from stackline_analyzer import (
-    STACKLINE_DIR,
-    analyze_stackline_channels_for_subcategory,
-)
 from redshift_stackline_cache import analyze_redshift_stackline_cache_for_subcategory
 from sku_lookup import build_mcp_queries, lookup_from_csv, merge_postgres_data
 
@@ -30,7 +25,6 @@ from sku_lookup import build_mcp_queries, lookup_from_csv, merge_postgres_data
 TOOLS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS_DIR.parent
 BACKEND_ROOT = TOOLS_DIR.parents[2]
-CATEGORY_INTELLIGENCE_DB = BACKEND_ROOT / "source_data" / "category_intelligence" / "sunco_category_intelligence.sqlite"
 SHARED_TEMPLATE_ROOT = Path(
     r"C:\Users\Sunco\Sunco Lighting\Product - Manny Tools\PRD Research\Working Tool Files\Templates"
 )
@@ -294,11 +288,10 @@ def build_stackline_context(
     identity: dict[str, Any],
     research_guidance: dict[str, Any],
     reference_sku: str | None,
-    stackline_folder: Path,
     stackline_brand: str,
     include_stackline_raw: bool,
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    """Attach Stackline market context for ideation performance estimation."""
+    """Attach Redshift-backed Stackline market context for ideation performance estimation."""
     if not stackline_expected(research_guidance):
         return {
             "enabled": False,
@@ -321,7 +314,6 @@ def build_stackline_context(
             "warnings": ["Stackline expected but subcategory is blank."],
         }, ["Stackline expected but subcategory is blank."]
 
-    source_attempts = []
     try:
         stackline_batch = analyze_redshift_stackline_cache_for_subcategory(
             subcategory=str(subcategory),
@@ -330,52 +322,21 @@ def build_stackline_context(
         )
     except Exception as exc:
         if isinstance(exc, FileNotFoundError):
-            source_attempts.append(str(exc))
+            warnings = [str(exc)]
         else:
-            source_attempts.append(f"Redshift Stackline cache analysis failed: {exc}")
-        try:
-            stackline_batch = analyze_stackline_channels_for_subcategory(
-                subcategory=str(subcategory),
-                reference_sku=reference_sku,
-                folder=stackline_folder,
-                brand_name=stackline_brand,
-            )
-        except FileNotFoundError as local_exc:
-            warnings = [*source_attempts, str(local_exc)]
-            fallback = build_category_intelligence_stackline_context(
-                subcategory=str(subcategory),
-                warnings=warnings,
-            )
-            if fallback:
-                return fallback, []
-            return {
-                "enabled": True,
-                "expected": True,
-                "matched": False,
-                "mode": "web_fallback",
-                "fallback_mode": "web_collection_only",
-                "subcategory": subcategory,
-                "source_priority": "redshift_then_local_csv",
-                "warnings": warnings,
-            }, warnings
-        except Exception as local_exc:
-            warnings = [*source_attempts, f"Local Stackline CSV analysis failed: {local_exc}"]
-            fallback = build_category_intelligence_stackline_context(
-                subcategory=str(subcategory),
-                warnings=warnings,
-            )
-            if fallback:
-                return fallback, []
-            return {
-                "enabled": True,
-                "expected": True,
-                "matched": False,
-                "mode": "web_fallback",
-                "fallback_mode": "web_collection_only",
-                "subcategory": subcategory,
-                "source_priority": "redshift_then_local_csv",
-                "warnings": warnings,
-            }, warnings
+            warnings = [f"Redshift Stackline cache analysis failed: {exc}"]
+
+        warnings.append("Refresh the Redshift Stackline connector/cache for this category before final decision-making.")
+        return {
+            "enabled": True,
+            "expected": True,
+            "matched": False,
+            "mode": "redshift_stackline_required",
+            "fallback_mode": "redshift_refresh_required",
+            "subcategory": subcategory,
+            "source_priority": "redshift_stackline_only",
+            "warnings": warnings,
+        }, warnings
 
     analysis = stackline_batch.get("primary_analysis") or {}
     channels = stackline_batch.get("channels") or {}
@@ -397,8 +358,8 @@ def build_stackline_context(
         "mode": "stackline_first",
         "fallback_mode": "targeted_web_enrichment",
         "subcategory": subcategory,
-        "source_system": stackline_batch.get("source_system") or "local_csv",
-        "source_priority": stackline_batch.get("source_priority") or "redshift_then_local_csv",
+        "source_system": stackline_batch.get("source_system") or "redshift_cache",
+        "source_priority": stackline_batch.get("source_priority") or "redshift_stackline_only",
         "primary_channel": stackline_batch.get("primary_channel"),
         "segment_name": analysis.get("segment_name"),
         "matched_bundle": analysis.get("matched_bundle"),
@@ -427,144 +388,6 @@ def build_stackline_context(
     return context, []
 
 
-def slugify_label(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    text = re.sub(r"[^a-z0-9]+", "_", text)
-    return text.strip("_")
-
-
-def compact_dict(data: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in data.items() if value not in (None, "", [], {})}
-
-
-def asin_from_url(value: Any) -> str | None:
-    match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", str(value or ""), flags=re.IGNORECASE)
-    return match.group(1).upper() if match else None
-
-
-def brand_from_example(value: Any) -> str | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    first = re.split(r"\s+", text, maxsplit=1)[0].strip(" ,-")
-    if first.lower() in {"amazon", "home", "lowe's", "lowes"}:
-        return None
-    return first or None
-
-
-def build_category_intelligence_stackline_context(subcategory: str, warnings: list[str]) -> dict[str, Any] | None:
-    """Fallback to local category-intelligence demand evidence when Stackline files are absent."""
-    if not CATEGORY_INTELLIGENCE_DB.exists():
-        return None
-
-    with sqlite3.connect(CATEGORY_INTELLIGENCE_DB) as connection:
-        connection.row_factory = sqlite3.Row
-        category = connection.execute(
-            "SELECT category_id, slug, run_name FROM categories WHERE slug = ? OR lower(run_name) = lower(?)",
-            (slugify_label(subcategory), subcategory),
-        ).fetchone()
-        if not category:
-            return None
-        rows = connection.execute(
-            """
-            SELECT source_channel, recommendation, classification, competitor_example, review_url, gap_rationale
-            FROM gap_evidence
-            WHERE category_id = ?
-            ORDER BY CASE lower(priority) WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
-                     CASE lower(confidence) WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END
-            LIMIT 10
-            """,
-            (category["category_id"],),
-        ).fetchall()
-
-    if not rows:
-        return None
-
-    products = []
-    for row in rows:
-        review_url = row["review_url"]
-        asin = asin_from_url(review_url)
-        channel = "amazon" if "amazon" in str(row["source_channel"]).lower() or asin else "home_depot"
-        products.append(
-            compact_dict(
-                {
-                    "brand": brand_from_example(row["competitor_example"]) or "Competitor",
-                    "retailer_sku": asin,
-                    "model_number": asin,
-                    "title": row["competitor_example"] or row["recommendation"],
-                    "url": review_url,
-                    "avg_retail_price": None,
-                    "units_sold": None,
-                    "sales_share_pct": None,
-                    "reviews_rating": None,
-                    "reviews_count": None,
-                    "source_channel": channel,
-                }
-            )
-        )
-
-    performance_context = {
-        "segment": {
-            "name": f"{category['run_name']} category intelligence fallback",
-            "retailer_scope": "category_intelligence",
-            "market_snapshot": {},
-            "market_momentum_pct": {},
-        },
-        "sunco_position": {},
-        "reference_family": {"found": False},
-        "estimation_inputs": {
-            "top_competitor_products": products,
-            "segment_leader": products[0] if products else {},
-        },
-        "opportunity_signals": [
-            "category_intelligence_gap_evidence_available",
-            "stackline_file_missing_using_local_gap_evidence",
-        ],
-        "warnings": warnings,
-    }
-    by_channel = {
-        "amazon": {
-            **performance_context,
-            "estimation_inputs": {
-                **performance_context["estimation_inputs"],
-                "top_competitor_products": [item for item in products if item.get("source_channel") == "amazon"] or products,
-            },
-        },
-        "home_depot": {
-            **performance_context,
-            "estimation_inputs": {
-                **performance_context["estimation_inputs"],
-                "top_competitor_products": [item for item in products if item.get("source_channel") == "home_depot"] or products,
-            },
-        },
-    }
-    return {
-        "enabled": True,
-        "expected": True,
-        "matched": True,
-        "mode": "stackline_first",
-        "fallback_mode": "category_intelligence_seeded_web_enrichment",
-        "subcategory": subcategory,
-        "source_system": "category_intelligence_sqlite",
-        "source_priority": "redshift_then_local_csv_then_category_intelligence",
-        "primary_channel": "amazon",
-        "segment_name": performance_context["segment"]["name"],
-        "matched_bundle": "category_intelligence_gap_evidence",
-        "performance_estimation_context": performance_context,
-        "channel_performance_estimation_contexts": by_channel,
-        "channel_comparison": {},
-        "channels": {
-            channel: {
-                "matched_bundle": "category_intelligence_gap_evidence",
-                "files": [str(CATEGORY_INTELLIGENCE_DB)],
-                "performance_estimation_context": context,
-            }
-            for channel, context in by_channel.items()
-        },
-        "warnings": warnings,
-    }
-
-
 def parse_template(
     workbook_path: str,
     postgres_payloads: dict[str, dict[str, Any]] | None = None,
@@ -573,14 +396,12 @@ def parse_template(
     include_stackline_raw: bool = False,
     start_date: str | None = None,
     end_date: str | None = None,
-    stackline_folder: str | None = None,
     stackline_brand: str = "Sunco Lighting",
     sheet_name: str = SHEET_NAME,
 ) -> dict[str, Any]:
     """Parse the ideations sheet into enriched ideation objects."""
     payloads = postgres_payloads or {}
     family_metrics = family_metrics_payloads or {}
-    resolved_stackline_folder = Path(stackline_folder) if stackline_folder else STACKLINE_DIR
     workbook = load_workbook(workbook_path, data_only=True)
     if sheet_name not in workbook.sheetnames:
         raise ValueError(f"Sheet '{sheet_name}' not found in workbook.")
@@ -658,16 +479,15 @@ def parse_template(
             reference_context["postgres_enrichment_provided"] = bool(postgres_payload)
             reference_context["family_metrics_enrichment_provided"] = bool(family_metrics_payload)
 
-            if not reference_context.get("found"):
+            if payloads and not postgres_payload:
                 issues.append(
-                    f"Reference SKU '{normalized_sku}' was not found in the metadata CSV."
+                    f"Reference SKU '{normalized_sku}' was not found in the supplied Postgres reference payload."
                 )
 
         stackline_context, stackline_issues = build_stackline_context(
             identity=identity,
             research_guidance=row_sections.get("research_guidance", {}),
             reference_sku=normalized_sku,
-            stackline_folder=resolved_stackline_folder,
             stackline_brand=stackline_brand,
             include_stackline_raw=include_stackline_raw,
         )
@@ -752,11 +572,6 @@ def main() -> None:
         help="Optional path to write the JSON output.",
     )
     parser.add_argument(
-        "--stackline-folder",
-        default=str(STACKLINE_DIR),
-        help="Folder containing Stackline summary / traffic exports.",
-    )
-    parser.add_argument(
         "--stackline-brand",
         default="Sunco Lighting",
         help="Brand name to treat as the internal brand focus in Stackline analysis.",
@@ -773,7 +588,6 @@ def main() -> None:
         include_stackline_raw=args.include_stackline_raw,
         start_date=args.start_date,
         end_date=args.end_date,
-        stackline_folder=args.stackline_folder,
         stackline_brand=args.stackline_brand,
         sheet_name=args.sheet,
     )

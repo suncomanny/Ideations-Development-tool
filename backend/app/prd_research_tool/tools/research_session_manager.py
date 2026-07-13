@@ -1267,7 +1267,6 @@ def initialize_session(
     include_stackline_raw: bool,
     start_date: str | None,
     end_date: str | None,
-    stackline_folder: str | None,
     stackline_brand: str,
     sheet_name: str,
 ) -> dict[str, Any]:
@@ -1287,7 +1286,6 @@ def initialize_session(
             include_stackline_raw=include_stackline_raw,
             start_date=start_date,
             end_date=end_date,
-            stackline_folder=stackline_folder,
             stackline_brand=stackline_brand,
             sheet_name=sheet_name,
         )
@@ -1393,7 +1391,6 @@ def main() -> None:
     init_parser.add_argument("--include-stackline-raw", action="store_true", help="Embed full Stackline analysis in packets.")
     init_parser.add_argument("--start-date", default=None, help="Override MCP start date.")
     init_parser.add_argument("--end-date", default=None, help="Override MCP end date.")
-    init_parser.add_argument("--stackline-folder", default=None, help="Override Stackline export folder.")
     init_parser.add_argument("--stackline-brand", default="Sunco Lighting", help="Internal brand name for Stackline.")
 
     update_parser = subparsers.add_parser("update", help="Refresh manifest status for an existing session.")
@@ -1430,7 +1427,6 @@ def main() -> None:
             include_stackline_raw=args.include_stackline_raw,
             start_date=args.start_date,
             end_date=args.end_date,
-            stackline_folder=args.stackline_folder,
             stackline_brand=args.stackline_brand,
             sheet_name=args.sheet,
         )

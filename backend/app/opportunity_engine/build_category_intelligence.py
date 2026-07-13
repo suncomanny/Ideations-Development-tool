@@ -715,51 +715,6 @@ def insert_catalog_attribute_distribution(connection: sqlite3.Connection) -> int
     return inserted
 
 
-def infer_channel_from_path(path: Path) -> str:
-    text = path.name.lower()
-    if "home_depot" in text or "home depot" in text:
-        return "home_depot"
-    if "amazon" in text:
-        return "amazon"
-    return "unknown"
-
-
-def insert_stackline_file_inventory(
-    connection: sqlite3.Connection,
-    paths: ProjectPaths,
-    lookup: dict[str, dict[str, Any]],
-    category_ids: dict[str, int],
-) -> tuple[int, list[str]]:
-    folder = paths.source_data / "Stackline Data"
-    if not folder.exists():
-        return 0, ["No local Stackline Data folder was found."]
-    now = utc_now()
-    count = 0
-    warnings = []
-    for path in folder.glob("*.csv"):
-        name = path.stem
-        category = None
-        for row in lookup.values():
-            tokens = [slugify(row["run_name"]), *(slugify(alias) for alias in row["aliases"])]
-            if any(token and token in slugify(name) for token in tokens):
-                category = row
-                break
-        if not category:
-            warnings.append(f"Could not map Stackline file to category: {path.name}")
-            continue
-        connection.execute(
-            """
-            INSERT INTO stackline_segments(
-                category_id, channel, segment_name, source, source_reference, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (category_ids[category["slug"]], infer_channel_from_path(path), name, "local_stackline_csv", str(path), now),
-        )
-        count += 1
-    return count, warnings
-
-
 def insert_redshift_cache_inventory(
     connection: sqlite3.Connection,
     paths: ProjectPaths,
@@ -849,9 +804,6 @@ def build_category_intelligence_database(paths: ProjectPaths, output_path: Path 
         counts["attribute_profile_defaults"] = insert_attribute_profiles(connection, paths, lookup, category_ids)
         counts["feature_profiles"] = insert_feature_profiles(connection, paths, lookup, category_ids)
         counts["sku_decoder_codes"] = insert_sku_decoder_codes(connection, paths, category_ids)
-        stackline_count, stackline_warnings = insert_stackline_file_inventory(connection, paths, lookup, category_ids)
-        counts["stackline_segments_from_csv_inventory"] = stackline_count
-        warnings.extend(stackline_warnings)
         counts["stackline_segments_from_redshift_cache_inventory"] = insert_redshift_cache_inventory(connection, paths, lookup, category_ids)
 
         if not (product_count or clean_product_count) and not any((paths.source_data / folder).exists() for folder in ["shopify", "catalog", "postgres_exports", "catalog_specs"]):

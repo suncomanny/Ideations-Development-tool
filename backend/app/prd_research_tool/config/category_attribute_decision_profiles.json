@@ -1,0 +1,302 @@
+{
+  "version": "2026-07-06",
+  "description": "Category-aware attribute decision profiles for Step 3 Section F. These profiles convert category spec expectations and Stackline-backed competitor evidence into PM-readable attribute decisions.",
+  "profiles": [
+    {
+      "id": "linear_strip_shop_attributes",
+      "label": "Linears / Shop / Utility Strip Attribute Decisions",
+      "profile_ids": [
+        "linear_strip_shop"
+      ],
+      "category_matches": [
+        "Linears",
+        "Shop Lights",
+        "Strip Lights",
+        "Wraparounds",
+        "LED ready fixtures"
+      ],
+      "match_keywords": [
+        "linear",
+        "shop light",
+        "strip light",
+        "wraparound",
+        "utility ceiling"
+      ],
+      "baseline_attributes": [
+        {
+          "attribute": "Light Engine",
+          "label": "Integrated LED",
+          "type": "Baseline",
+          "match_terms": [
+            "led wraparound",
+            "led shop light",
+            "led strip fixture",
+            "led light fixture",
+            "integrated led"
+          ],
+          "recommendation": "Treat integrated LED as the baseline for this luminaire category unless the concept is intentionally LED-ready or socket-based.",
+          "notes": "This should not be treated as a product differentiator for wraparounds, linears, shop lights, or strip fixtures."
+        }
+      ],
+      "attribute_groups": [
+        {
+          "attribute": "CCT Strategy",
+          "type": "Feature",
+          "decision_question": "Which CCT approach should this SKU use?",
+          "values": [
+            {
+              "label": "Fixed CCT",
+              "matcher": "fixed_cct",
+              "recommendation": "Use fixed CCT only when the strongest direct-demand examples are fixed color and price simplicity matters more than configuration flexibility."
+            },
+            {
+              "label": "3CCT selectable",
+              "match_terms": [
+                "3cct",
+                "3 cct",
+                "3 color selectable",
+                "three color selectable",
+                "3000k/4000k/5000k",
+                "3500k/4000k/5000k",
+                "4000k/5000k/6500k"
+              ],
+              "recommendation": "Use 3CCT when direct competitors show meaningful movement and the goal is commercial parity without adding 5CCT complexity."
+            },
+            {
+              "label": "5CCT selectable",
+              "match_terms": [
+                "5cct",
+                "5 cct",
+                "5 color selectable",
+                "five color selectable",
+                "2700k-5000k",
+                "2700k/3000k/3500k/4000k/5000k",
+                "3000k/3500k/4000k/5000k/6500k"
+              ],
+              "recommendation": "Use 5CCT only if competitor demand supports a premium adjustable-positioning story."
+            },
+            {
+              "label": "Selectable CCT",
+              "match_terms": [
+                "selectable cct",
+                "cct selectable",
+                "color selectable",
+                "selectable color temperature",
+                "wattage and color selectable",
+                "multi cct",
+                "mcct"
+              ],
+              "recommendation": "Keep selectable CCT in scope when the competitor set shows it as a mainstream buying filter."
+            }
+          ]
+        },
+        {
+          "attribute": "Lens / Diffuser",
+          "type": "Feature",
+          "decision_question": "Which lens or diffuser should be specified?",
+          "values": [
+            {
+              "label": "Frosted lens",
+              "match_terms": [
+                "frosted lens",
+                "frosted diffuser",
+                "frosted cover",
+                "frosted"
+              ],
+              "recommendation": "Use frosted lens when the concept needs broad utility-room diffusion with a cleaner residential/commercial appearance."
+            },
+            {
+              "label": "Prismatic lens",
+              "match_terms": [
+                "prismatic lens",
+                "prismatic diffuser",
+                "prismatic cover",
+                "prismatic"
+              ],
+              "recommendation": "Use prismatic lens when the strongest comparable products lean contractor/commercial and light control matters more than a smooth appearance."
+            },
+            {
+              "label": "Clear lens",
+              "match_terms": [
+                "clear lens",
+                "clear diffuser",
+                "clear cover"
+              ],
+              "recommendation": "Use clear lens only if the market evidence supports output-first positioning and glare risk is acceptable."
+            }
+          ]
+        },
+        {
+          "attribute": "Controls",
+          "type": "Feature",
+          "decision_question": "Which controls should be included or left out?",
+          "values": [
+            {
+              "label": "Dimmable",
+              "match_terms": [
+                "dimmable",
+                "dim to",
+                "dimming"
+              ],
+              "recommendation": "Keep dimmability when it appears on direct competitors or when Sunco wants a mainstream commercial fixture story."
+            },
+            {
+              "label": "0-10V dimming",
+              "match_terms": [
+                "0-10v",
+                "0 10v",
+                "0-10 v"
+              ],
+              "recommendation": "Use 0-10V only when commercial controls are part of the SKU thesis or stronger competitors make it expected."
+            },
+            {
+              "label": "Sensor-ready / motion sensor",
+              "match_terms": [
+                "sensor ready",
+                "motion sensor",
+                "occupancy sensor",
+                "pir"
+              ],
+              "recommendation": "Treat sensor-ready or motion sensing as a variant-level decision, not a default, unless competitor evidence shows it as a buying filter."
+            }
+          ]
+        },
+        {
+          "attribute": "Installation / Linking",
+          "type": "Feature",
+          "decision_question": "Which install features should be scoped for RFQ?",
+          "values": [
+            {
+              "label": "Surface / flush mount",
+              "match_terms": [
+                "surface mount",
+                "flush mount",
+                "ceiling mount"
+              ],
+              "recommendation": "Keep surface or flush mounting explicit because it is a core compatibility filter for wraparound and utility fixtures."
+            },
+            {
+              "label": "Linkable / daisy-chain",
+              "match_terms": [
+                "linkable",
+                "daisy chain",
+                "daisy-chain",
+                "continuous row",
+                "end to end connection"
+              ],
+              "recommendation": "Include linkability when competitor demand supports garage/shop/utility multi-fixture runs."
+            },
+            {
+              "label": "Suspension kit",
+              "match_terms": [
+                "suspension kit",
+                "suspended",
+                "chain mount",
+                "hanging kit"
+              ],
+              "recommendation": "Keep suspension hardware as an optional accessory unless direct competitors make suspended installation standard."
+            }
+          ]
+        },
+        {
+          "attribute": "Performance Configuration",
+          "type": "Feature",
+          "decision_question": "How configurable should output be?",
+          "values": [
+            {
+              "label": "Selectable wattage",
+              "match_terms": [
+                "selectable wattage",
+                "wattage selectable",
+                "wattage and color selectable",
+                "3 wattages",
+                "multi wattage",
+                "mw"
+              ],
+              "recommendation": "Use selectable wattage when the market evidence supports one SKU covering several replacement/output needs."
+            },
+            {
+              "label": "High output",
+              "match_terms": [
+                "high output",
+                "super bright",
+                "7500lm",
+                "7600 lumen",
+                "7600lm",
+                "7800 lumen",
+                "7800lm"
+              ],
+              "recommendation": "Use high output when the target lumen tier wins against the comparable set without creating margin or wattage pressure."
+            }
+          ]
+        },
+        {
+          "attribute": "Ratings / Certifications",
+          "type": "Mixed",
+          "decision_question": "Which channel/compliance claims should be requested?",
+          "values": [
+            {
+              "label": "ETL",
+              "matcher": "certification",
+              "recommendation": "Request ETL/UL listing support before RFQ release for hardwired commercial fixtures."
+            },
+            {
+              "label": "UL",
+              "matcher": "certification",
+              "recommendation": "Request ETL/UL listing support before RFQ release for hardwired commercial fixtures."
+            },
+            {
+              "label": "DLC",
+              "matcher": "certification",
+              "recommendation": "Request DLC only if the intended channel or commercial buyer expects rebate/spec-grade positioning."
+            },
+            {
+              "label": "Damp rated",
+              "match_terms": [
+                "damp rated",
+                "damp location",
+                "damp"
+              ],
+              "recommendation": "Keep damp rating when the fixture is positioned for garage, utility, laundry, or light commercial interiors."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "generic_lighting_attributes",
+      "label": "Generic Lighting Attribute Decisions",
+      "profile_ids": [
+        "generic_lighting"
+      ],
+      "match_keywords": [],
+      "attribute_groups": [
+        {
+          "attribute": "Core Feature",
+          "type": "Feature",
+          "decision_question": "Which repeated feature is important enough to keep in scope?",
+          "values": [
+            {
+              "label": "Dimmable",
+              "match_terms": [
+                "dimmable",
+                "dimming"
+              ],
+              "recommendation": "Keep dimmability only when direct competitor examples or the category use case make it important."
+            },
+            {
+              "label": "Selectable CCT",
+              "match_terms": [
+                "selectable cct",
+                "cct selectable",
+                "color selectable",
+                "selectable color temperature"
+              ],
+              "recommendation": "Keep selectable CCT when direct competitor examples show it as a repeated buying filter."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

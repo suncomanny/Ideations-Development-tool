@@ -2,13 +2,14 @@
 
 The double-click workflow cannot call Codex MCP tools directly, so Redshift
 extracts are stored as JSON snapshots under backend/source_data. Packet
-generation reads these snapshots before falling back to local Stackline CSVs.
+generation reads only these Redshift-derived snapshots.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from datetime import date, datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ TOOLS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = TOOLS_DIR.parents[3]
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "backend" / "source_data" / "redshift_stackline_cache"
 CACHE_MAX_AGE_DAYS = 30
+ALLOW_STALE_CACHE_ENV = "PRD_RESEARCH_ALLOW_STALE_REDSHIFT_STACKLINE_CACHE"
 CHANNEL_PRIORITY = {
     "amazon": 4,
     "home_depot": 3,
@@ -38,6 +40,11 @@ def clean_number(value: Any, digits: int = 2) -> float | None:
     if math.isnan(number) or math.isinf(number):
         return None
     return round(number, digits)
+
+
+def env_flag(name: str) -> bool:
+    """Return True when an environment flag is explicitly enabled."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def pct_delta(current: Any, prior: Any) -> float | None:
@@ -248,7 +255,7 @@ def build_performance_context(
     }
 
     warnings = [
-        "Stackline context loaded from Redshift cache before local CSV fallback.",
+        "Stackline context loaded from Redshift cache.",
         f"Stackline context is scoped to {channel_key.replace('_', ' ')} rather than an all-retailer market view.",
     ]
     warnings.extend(cache.get("warnings") or [])
@@ -353,6 +360,11 @@ def analyze_redshift_stackline_cache_for_subcategory(
 
     cache_warnings = []
     if age_days > CACHE_MAX_AGE_DAYS:
+        if not env_flag(ALLOW_STALE_CACHE_ENV):
+            raise FileNotFoundError(
+                f"Redshift Stackline cache for '{subcategory}' is {age_days} days old; "
+                "refresh the Redshift Stackline cache before final decision-making."
+            )
         cache_warnings.append(
             f"Redshift Stackline cache is {age_days} days old; refresh the cache before final decision-making."
         )

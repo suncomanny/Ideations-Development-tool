@@ -35,6 +35,7 @@ RAW_STAGE_KEYS = [
     "brand_site_collection",
 ]
 PROFILE_PATH = Path(__file__).resolve().parents[1] / "config" / "category_signal_profiles.json"
+ATTRIBUTE_DECISION_PROFILE_PATH = Path(__file__).resolve().parents[1] / "config" / "category_attribute_decision_profiles.json"
 
 
 def normalize_text(value: Any) -> str | None:
@@ -181,6 +182,15 @@ def load_category_signal_profiles() -> dict[str, Any]:
         return json.load(handle)
 
 
+@lru_cache(maxsize=1)
+def load_category_attribute_decision_profiles() -> dict[str, Any]:
+    """Load category-aware attribute decision profiles for Section F."""
+    if not ATTRIBUTE_DECISION_PROFILE_PATH.exists():
+        return {"profiles": []}
+    with ATTRIBUTE_DECISION_PROFILE_PATH.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def parse_number(value: Any) -> float | None:
     """Parse numeric-ish text into a float."""
     if value is None or value == "":
@@ -228,8 +238,8 @@ def parse_series_numbers(value: Any) -> list[float]:
     text = normalize_text(value)
     if not text:
         return []
-    matches = re.findall(r"\d+(?:\.\d+)?", text)
-    return [float(match) for match in matches]
+    matches = re.findall(r"\d[\d,]*(?:\.\d+)?", text)
+    return [float(match.replace(",", "")) for match in matches]
 
 
 def percentile(values: list[float], ratio: float) -> float | None:
@@ -866,7 +876,20 @@ def feature_match_detail(item: dict[str, Any], label: str) -> dict[str, Any]:
     title = normalized_compare_text(item.get("product_title"))
     features = normalized_compare_text(" ".join(item.get("features", [])))
     dimming_type = normalized_compare_text(item.get("dimming_type"))
-    haystack = f"{title} {features}"
+    extra = normalized_compare_text(
+        " ".join(
+            [
+                normalize_text(item.get("brand")) or "",
+                normalize_text(item.get("model_number")) or "",
+                normalize_text(item.get("sku")) or "",
+                normalize_text(item.get("cct")) or "",
+                normalize_text(item.get("wattage")) or "",
+                normalize_text(item.get("lumens")) or "",
+                " ".join(str(value) for value in as_list(item.get("raw_observations"))),
+            ]
+        )
+    )
+    haystack = f"{title} {features} {extra}"
 
     def explicit() -> dict[str, Any]:
         return {"matched": True, "basis": "explicit"}
@@ -978,18 +1001,57 @@ def feature_match_detail(item: dict[str, Any], label: str) -> dict[str, Any]:
             "led troffer",
             "led fixture",
             "led ceiling light",
+            "led wraparound",
+            "led wrap light",
+            "led shop light",
+            "led strip fixture",
+            "led vapor tight",
+            "led high bay",
             "panel light",
         )
         if any(pattern in haystack for pattern in explicit_patterns):
+            return explicit()
+        return {"matched": False}
+    if lowered in {"3cct", "3 cct", "3cct selectable", "3 cct selectable", "3 color selectable"}:
+        if any(
+            pattern in haystack
+            for pattern in (
+                "3cct",
+                "3 cct",
+                "3 color selectable",
+                "three color selectable",
+                "3000k 4000k 5000k",
+                "3500k 4000k 5000k",
+                "4000k 5000k 6500k",
+            )
+        ):
+            return explicit()
+        return {"matched": False}
+    if lowered in {"5cct", "5 cct", "5cct selectable", "5 cct selectable", "5 color selectable"}:
+        if any(
+            pattern in haystack
+            for pattern in (
+                "5cct",
+                "5 cct",
+                "5 color selectable",
+                "five color selectable",
+                "2700k 3000k 3500k 4000k 5000k",
+                "3000k 3500k 4000k 5000k 6500k",
+            )
+        ):
             return explicit()
         return {"matched": False}
     if "selectable wattage" in lowered:
         if (
             "/" in (normalize_text(item.get("wattage")) or "")
             or "selectable wattage" in features
+            or "wattage selectable" in haystack
+            or "multi wattage" in haystack
+            or "3 wattages" in haystack
             or "adjustable lumen output" in haystack
             or "lumens selectable" in haystack
             or "wattage and cct selectable" in haystack
+            or "wattage and color selectable" in haystack
         ):
             return explicit()
         return {"matched": False}
@@ -1010,6 +1072,30 @@ def feature_match_detail(item: dict[str, Any], label: str) -> dict[str, Any]:
         return {"matched": False}
     if lowered.startswith("ip"):
         if lowered in title or lowered in features:
+            return explicit()
+        return {"matched": False}
+    if lowered in {"frosted lens", "frosted diffuser", "frosted cover"}:
+        if "frosted" in haystack:
+            return explicit()
+        return {"matched": False}
+    if lowered in {"prismatic lens", "prismatic diffuser", "prismatic cover"}:
+        if "prismatic" in haystack:
+            return explicit()
+        return {"matched": False}
+    if lowered in {"clear lens", "clear diffuser", "clear cover"}:
+        if "clear" in haystack and any(term in haystack for term in ("lens", "diffuser", "cover")):
+            return explicit()
+        return {"matched": False}
+    if lowered in {"linkable", "daisy chain", "daisy chainable", "continuous row"}:
+        if any(term in haystack for term in ("linkable", "daisy chain", "daisy chainable", "continuous row", "end to end")):
+            return explicit()
+        return {"matched": False}
+    if lowered in {"surface mount", "flush mount", "ceiling mount"}:
+        if lowered in haystack:
+            return explicit()
+        return {"matched": False}
+    if lowered in {"sensor ready", "sensor-ready"}:
+        if any(term in haystack for term in ("sensor ready", "sensor receptacle", "motion sensor", "pir")):
             return explicit()
         return {"matched": False}
 
@@ -1051,6 +1137,12 @@ def build_spec_coverage(packet: dict[str, Any], items: list[dict[str, Any]]) -> 
     target_profile = as_dict(packet.get("target_profile"))
     electrical = as_dict(target_profile.get("electrical"))
     must_validate = as_dict(research_plan.get("must_validate"))
+    attribute_profile = select_attribute_decision_profile(packet)
+    baseline_feature_labels = {
+        label_key(label)
+        for label in attribute_profile_baseline_labels(attribute_profile)
+        if label_key(label)
+    }
     certifications = unique_preserve_order(
         [
             label
@@ -1061,7 +1153,13 @@ def build_spec_coverage(packet: dict[str, Any], items: list[dict[str, Any]]) -> 
     feature_watchlist = []
     for value in as_list(must_validate.get("features")):
         feature_watchlist.extend(clean_feature_labels(value))
+    feature_watchlist.extend(attribute_profile_feature_labels(attribute_profile))
     feature_watchlist = unique_preserve_order(feature_watchlist)
+    feature_watchlist = [
+        label
+        for label in feature_watchlist
+        if label_key(label) not in baseline_feature_labels
+    ]
     direct_spec_count = sum(1 for item in items if has_direct_spec_detail(item))
 
     total_source_channels = len(
@@ -1253,6 +1351,13 @@ def build_spec_coverage(packet: dict[str, Any], items: list[dict[str, Any]]) -> 
     return {
         "feature_watchlist": feature_watchlist,
         "certification_watchlist": certifications,
+        "attribute_decision_profile": compact_dict(
+            {
+                "id": attribute_profile.get("id"),
+                "label": attribute_profile.get("label"),
+            }
+        ),
+        "attribute_decisions": build_attribute_decision_rows(packet, items, attribute_profile),
         "feature_coverage": feature_coverage,
         "certification_coverage": certification_coverage,
         "numeric_guidance": numeric_guidance,
@@ -1551,6 +1656,308 @@ def detect_category_signal_profile(packet: dict[str, Any]) -> dict[str, Any]:
     result["matched_taxonomy"] = matched_taxonomy
     result["active_modifiers"] = active_modifiers
     return result
+
+
+def attribute_profile_match_score(profile: dict[str, Any], packet: dict[str, Any], signal_profile_id: str, haystack: str) -> int:
+    """Score an attribute-decision profile against the current packet."""
+    profile_ids = {normalize_text(value) for value in as_list(profile.get("profile_ids")) if normalize_text(value)}
+    score = 0
+    if signal_profile_id and signal_profile_id in profile_ids:
+        score += 120
+
+    labels = packet_identity_labels(packet)
+    for value in as_list(profile.get("category_matches")):
+        key = label_key(value)
+        if key and key in {labels.get("category"), labels.get("subcategory")}:
+            score += 80
+
+    for keyword in matched_keywords_for_haystack(haystack, as_list(profile.get("match_keywords"))):
+        if keyword:
+            score += 1
+    return score
+
+
+def select_attribute_decision_profile(packet: dict[str, Any]) -> dict[str, Any]:
+    """Select the best Section F attribute-decision profile for the packet."""
+    config = load_category_attribute_decision_profiles()
+    profiles = as_list(config.get("profiles"))
+    if not profiles:
+        return {}
+
+    signal_profile = detect_category_signal_profile(packet)
+    signal_profile_id = normalize_text(signal_profile.get("id")) or ""
+    haystack = packet_profile_haystack(packet)
+    scored = [
+        (attribute_profile_match_score(profile, packet, signal_profile_id, haystack), profile)
+        for profile in profiles
+    ]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_profile = scored[0]
+    if best_score <= 0:
+        generic = next((profile for profile in profiles if profile.get("id") == "generic_lighting_attributes"), {})
+        return dict(generic)
+    return dict(best_profile)
+
+
+def attribute_profile_feature_labels(profile: dict[str, Any]) -> list[str]:
+    """Return non-baseline feature labels that should be measured for the selected profile."""
+    labels: list[str] = []
+    for group in as_list(profile.get("attribute_groups")):
+        for value in as_list(as_dict(group).get("values")):
+            value = as_dict(value)
+            if normalize_text(value.get("matcher")) == "certification":
+                continue
+            label = normalize_text(value.get("label"))
+            if label:
+                labels.append(label)
+    return unique_preserve_order(labels)
+
+
+def attribute_profile_baseline_labels(profile: dict[str, Any]) -> list[str]:
+    """Return labels that should be treated as category baseline assumptions."""
+    return unique_preserve_order(
+        [
+            normalize_text(value.get("label")) or ""
+            for value in as_list(profile.get("baseline_attributes"))
+            if isinstance(value, dict)
+        ]
+    )
+
+
+def normalized_item_haystack(item: dict[str, Any]) -> str:
+    """Build a normalized searchable item text from title, specs, and observations."""
+    parts = [
+        item.get("product_title"),
+        item.get("brand"),
+        item.get("model_number"),
+        item.get("sku"),
+        item.get("wattage"),
+        item.get("lumens"),
+        item.get("cct"),
+        item.get("voltage"),
+        item.get("dimming_type"),
+        " ".join(str(value) for value in as_list(item.get("features"))),
+        " ".join(str(value) for value in as_list(item.get("certifications"))),
+        " ".join(str(value) for value in as_list(item.get("raw_observations"))),
+    ]
+    return normalized_compare_text(" ".join(normalize_text(part) or "" for part in parts))
+
+
+def option_match_detail(item: dict[str, Any], option: dict[str, Any], group: dict[str, Any]) -> dict[str, Any]:
+    """Match a configured attribute option against one normalized competitor item."""
+    label = normalize_text(option.get("label")) or ""
+    matcher = normalize_text(option.get("matcher")) or ""
+    haystack = normalized_item_haystack(item)
+
+    if matcher == "certification":
+        return {"matched": certification_matches(item, label), "basis": "explicit" if certification_matches(item, label) else ""}
+
+    if matcher == "fixed_cct":
+        cct = normalize_text(item.get("cct")) or ""
+        cct_values = re.findall(r"\b\d{4}\s*k\b", cct.lower())
+        if cct_values and len(set(cct_values)) == 1:
+            selectable_terms = (
+                "selectable cct",
+                "cct selectable",
+                "color selectable",
+                "3cct",
+                "5cct",
+                "3 cct",
+                "5 cct",
+                "multi cct",
+            )
+            if not any(term in haystack for term in selectable_terms):
+                return {"matched": True, "basis": "explicit"}
+        return {"matched": False}
+
+    for term in as_list(option.get("match_terms")):
+        normalized_term = normalized_compare_text(term)
+        if normalized_term and normalized_term in haystack:
+            return {"matched": True, "basis": "explicit"}
+
+    detail = feature_match_detail(item, label)
+    if detail.get("matched"):
+        return detail
+    return {"matched": False}
+
+
+def item_sales_share_pct(item: dict[str, Any]) -> float:
+    """Extract Stackline sales share percent when available."""
+    direct = parse_number(item.get("sales_share_pct"))
+    if direct is not None:
+        return direct
+    for observation in as_list(item.get("raw_observations")):
+        match = re.search(r"sales_share_pct\s*=\s*([\d.]+)", str(observation), flags=re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+    return 0.0
+
+
+def item_short_name(item: dict[str, Any]) -> str:
+    """Return a compact competitor identifier for evidence notes."""
+    pieces = [
+        normalize_text(item.get("brand")),
+        normalize_text(item.get("model_number")) or normalize_text(item.get("sku")),
+    ]
+    return " ".join(piece for piece in pieces if piece) or normalize_text(item.get("product_title")) or "Competitor item"
+
+
+def option_source_channels(items: list[dict[str, Any]]) -> list[str]:
+    """Return unique source channels for matched option evidence."""
+    return unique_preserve_order(
+        [
+            normalize_text(item.get("source_channel")) or normalize_text(item.get("collection_method")) or ""
+            for item in items
+            if normalize_text(item.get("source_channel")) or normalize_text(item.get("collection_method"))
+        ]
+    )
+
+
+def target_mentions_option(packet: dict[str, Any], option: dict[str, Any]) -> bool:
+    """Return whether the ideation target already includes an attribute option."""
+    target_profile = as_dict(packet.get("target_profile"))
+    haystack = normalized_compare_text(json.dumps(target_profile, ensure_ascii=True))
+    label = normalized_compare_text(option.get("label"))
+    if label and label in haystack:
+        return True
+    return any((normalized_compare_text(term) or "") in haystack for term in as_list(option.get("match_terms")))
+
+
+def build_attribute_decision_rows(packet: dict[str, Any], items: list[dict[str, Any]], profile: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build PM-readable category attribute decisions for Section F."""
+    if not profile:
+        return []
+
+    total_count = len(items)
+    rows: list[dict[str, Any]] = []
+
+    for baseline in as_list(profile.get("baseline_attributes")):
+        baseline = as_dict(baseline)
+        label = normalize_text(baseline.get("label"))
+        if not label:
+            continue
+        matched_items = [
+            item
+            for item in items
+            if option_match_detail(item, baseline, {"attribute": baseline.get("attribute")}).get("matched")
+        ]
+        rows.append(
+            compact_dict(
+                {
+                    "attribute": f"{normalize_text(baseline.get('attribute')) or 'Baseline'}: {label}",
+                    "type": normalize_text(baseline.get("type")) or "Baseline",
+                    "market_evidence": (
+                        f"Baseline category assumption; {len(matched_items)} of {total_count} direct comps explicitly mention it."
+                        if total_count
+                        else "Baseline category assumption."
+                    ),
+                    "sunco_coverage": "Treat as expected category baseline unless this concept is LED-ready or socket-based.",
+                    "recommendation": normalize_text(baseline.get("recommendation")),
+                    "source_notes": normalize_text(baseline.get("notes")),
+                    "covered_labels": [label],
+                    "sort_weight": 0,
+                }
+            )
+        )
+
+    for group_index, group in enumerate(as_list(profile.get("attribute_groups")), start=1):
+        group = as_dict(group)
+        attribute = normalize_text(group.get("attribute")) or "Attribute"
+        group_type = normalize_text(group.get("type")) or "Feature"
+        option_summaries: list[dict[str, Any]] = []
+
+        for option in as_list(group.get("values")):
+            option = as_dict(option)
+            label = normalize_text(option.get("label"))
+            if not label:
+                continue
+            match_details = [option_match_detail(item, option, group) for item in items]
+            matched_items = [item for item, detail in zip(items, match_details) if detail.get("matched")]
+            matched_count = len(matched_items)
+            sales_share = round(sum(item_sales_share_pct(item) for item in matched_items), 2)
+            channels = option_source_channels(matched_items)
+            examples = [item_short_name(item) for item in matched_items[:3]]
+            target_flag = target_mentions_option(packet, option)
+            option_summaries.append(
+                compact_dict(
+                    {
+                        "label": label,
+                        "matched_count": matched_count,
+                        "coverage_pct": round((matched_count / total_count) * 100, 2) if total_count else None,
+                        "sales_share_pct": sales_share if sales_share else None,
+                        "channels": channels,
+                        "examples": examples,
+                        "recommendation": normalize_text(option.get("recommendation")),
+                        "target_flag": target_flag,
+                    }
+                )
+            )
+
+        if not option_summaries:
+            continue
+
+        best = max(
+            option_summaries,
+            key=lambda entry: (
+                parse_number(entry.get("sales_share_pct")) or 0,
+                parse_number(entry.get("matched_count")) or 0,
+                1 if entry.get("target_flag") else 0,
+            ),
+        )
+        best_has_evidence = bool(parse_number(best.get("sales_share_pct")) or parse_number(best.get("matched_count")))
+        for option in option_summaries:
+            matched_count = int(parse_number(option.get("matched_count")) or 0)
+            coverage_pct = parse_number(option.get("coverage_pct"))
+            sales_share = parse_number(option.get("sales_share_pct"))
+            evidence_bits = [
+                f"{matched_count} of {total_count} direct comps" if total_count else "No direct comp sample",
+            ]
+            if coverage_pct is not None:
+                evidence_bits.append(f"{coverage_pct:.1f}% coverage")
+            if sales_share:
+                if sales_share > 100:
+                    evidence_bits.append("100%+ Stackline sales-share signal")
+                else:
+                    evidence_bits.append(f"{sales_share:.1f}% Stackline sales-share support")
+            examples = as_list(option.get("examples"))
+            if examples:
+                evidence_bits.append("examples: " + ", ".join(str(example) for example in examples[:2]))
+
+            recommendation = normalize_text(option.get("recommendation")) or ""
+            if option.get("label") == best.get("label") and best_has_evidence:
+                recommendation = f"Lead option for this attribute based on current evidence. {recommendation}".strip()
+            elif option.get("target_flag") and best_has_evidence:
+                recommendation = f"Target includes this option, but compare against the lead option before RFQ. {recommendation}".strip()
+            elif option.get("target_flag"):
+                recommendation = f"Target includes this option, but current competitor evidence does not establish it as expected. {recommendation}".strip()
+            elif not best_has_evidence:
+                recommendation = f"No lead option from current competitor evidence. {recommendation}".strip()
+
+            rows.append(
+                compact_dict(
+                    {
+                        "attribute": f"{attribute}: {option.get('label')}",
+                        "type": group_type,
+                        "market_evidence": "; ".join(evidence_bits),
+                        "sunco_coverage": "Target includes this option" if option.get("target_flag") else "Target does not currently specify this option",
+                        "recommendation": recommendation,
+                        "source_notes": (
+                            "Channels: " + ", ".join(as_list(option.get("channels")))
+                            if as_list(option.get("channels"))
+                            else normalize_text(group.get("decision_question"))
+                        ),
+                        "covered_labels": [option.get("label")],
+                        "sort_weight": group_index,
+                    }
+                )
+            )
+
+    def decision_sort_weight(entry: dict[str, Any]) -> int:
+        weight = parse_number(entry.get("sort_weight"))
+        return int(weight) if weight is not None else 999
+
+    rows.sort(key=lambda entry: (decision_sort_weight(entry), normalize_text(entry.get("attribute")) or ""))
+    return rows
 
 
 def find_signal_entry(entries: list[dict[str, Any]], target_label: str) -> dict[str, Any] | None:

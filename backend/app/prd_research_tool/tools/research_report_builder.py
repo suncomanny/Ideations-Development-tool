@@ -25,6 +25,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from approved_competitor_sources import (
+    approved_competitor_source_for_domain,
+    approved_sources_for_category,
+    domain_matches,
+    load_approved_competitor_sources,
+    source_search_link,
+)
 from research_session_manager import artifact_path_for, packet_path_for, read_json, update_session
 
 
@@ -76,6 +83,7 @@ SLIDE_TABLE_BORDER = Border(left=SLIDE_THIN_SIDE, right=SLIDE_THIN_SIDE, top=SLI
 AMAZON_CHANNELS = {"amazon"}
 BM_DIRECT_CHANNELS = {"home_depot", "walmart", "lowes", "brand_site"}
 SKU_DECODER_CACHE = Path(__file__).resolve().parents[3] / "source_data" / "sku_decoder" / "sku_decoder_clean.csv"
+ECOMMERCE_CACHE_ROOT = Path(__file__).resolve().parents[3] / "source_data" / "redshift_ecommerce_cache"
 CHANNEL_DISPLAY_NAMES = {
     "amazon": "Amazon",
     "home_depot": "Home Depot",
@@ -123,6 +131,7 @@ MATCH_QUALITY_NOT_COMPARABLE = "Not comparable"
 LINK_STATUS_VERIFIED = "Verified link"
 LINK_STATUS_NEEDS_CHECK = "Needs link check"
 LINK_STATUS_MISSING = "No direct link"
+LINK_STATUS_INVALID = "Needs product PDP"
 
 SOURCE_LABELS = {
     "legacy_fy2025_sales_export": "Local historical sales fallback",
@@ -230,6 +239,8 @@ def decimal_from_value(value: Any) -> Decimal | None:
     """Parse simple numeric values without keeping float representation noise."""
     if isinstance(value, bool) or value is None:
         return None
+    if isinstance(value, Decimal):
+        return value
     if isinstance(value, int):
         return Decimal(value)
     if isinstance(value, float):
@@ -289,6 +300,99 @@ def slugify(value: Any) -> str:
     text = normalize_text(value).strip().lower()
     text = re.sub(r"[^a-z0-9]+", "_", text)
     return text.strip("_")
+
+
+def category_slug_for_packet(packet: dict[str, Any]) -> str:
+    """Return the category slug used by local cache folders."""
+    identity = as_dict(packet.get("identity"))
+    return slugify(identity.get("subcategory") or identity.get("category"))
+
+
+def short_domain(value: Any) -> str:
+    """Return a compact display domain from a URL or host."""
+    text = normalize_text(value)
+    if not text:
+        return ""
+    host = urlparse(text if "://" in text else f"//{text}").netloc or text
+    return host.lower().replace("www.", "").strip("/")
+
+
+@lru_cache(maxsize=128)
+def latest_ecommerce_snapshot_payload(category_slug: str) -> dict[str, Any]:
+    """Load the newest Redshift ecommerce competitor snapshot for a category."""
+    if not category_slug or not ECOMMERCE_CACHE_ROOT.exists():
+        return {}
+    candidates = sorted(
+        ECOMMERCE_CACHE_ROOT.glob(f"**/{category_slug}_ecommerce_competitor_evidence_*.json"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    if not candidates:
+        return {}
+    try:
+        return json.loads(candidates[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def first_number_from_fields(item: dict[str, Any], keys: list[str]) -> Decimal | None:
+    """Return the first numeric value from an item field list."""
+    for key in keys:
+        number = decimal_from_value(item.get(key))
+        if number is not None:
+            return number
+    return None
+
+
+def number_from_observation(item: dict[str, Any], observation_key: str) -> Decimal | None:
+    """Parse a numeric key=value metric from raw observation strings."""
+    pattern = re.compile(rf"\b{re.escape(observation_key)}\s*=\s*([0-9,]+(?:\.[0-9]+)?)", flags=re.IGNORECASE)
+    for observation in as_list(item.get("raw_observations")):
+        match = pattern.search(normalize_text(observation))
+        if match:
+            return decimal_from_value(match.group(1))
+    return None
+
+
+def display_number(value: Decimal, places: int = 0) -> str:
+    """Format a Decimal for compact demand cells."""
+    return format_decimal(value, places).rstrip("0").rstrip(".") if places else format_decimal(value, 0)
+
+
+def demand_signal_parts_from_text(text: Any) -> list[str]:
+    """Split legacy free-text movement notes into volume, rate, and recency/window."""
+    note = normalize_text(text)
+    if not note:
+        return ["", "", ""]
+
+    volume_parts: list[str] = []
+    match = re.search(r"([0-9,]+(?:\.[0-9]+)?)\s+units?\s+observed stock decrease", note, flags=re.IGNORECASE)
+    if match:
+        volume_parts.append(f"{match.group(1)} stock decrease units")
+    match = re.search(r"([0-9,]+)\s+decrease events?", note, flags=re.IGNORECASE)
+    if match:
+        volume_parts.append(f"{match.group(1)} decrease events")
+
+    rate = ""
+    match = re.search(r"~?\s*([0-9,]+(?:\.[0-9]+)?)\s+units/week", note, flags=re.IGNORECASE)
+    if match:
+        rate = f"{match.group(1)} units/week"
+
+    recency_parts: list[str] = []
+    match = re.search(r"last decrease\s+([0-9,]+)\s+day", note, flags=re.IGNORECASE)
+    if match:
+        recency_parts.append(f"{match.group(1)} days since last decrease")
+    match = re.search(r"observed over\s+([0-9,]+)\s+day", note, flags=re.IGNORECASE)
+    if match:
+        recency_parts.append(f"{match.group(1)}-day observed window")
+    match = re.search(r"decrease activity over\s+([0-9,]+)\s+day", note, flags=re.IGNORECASE)
+    if match:
+        recency_parts.append(f"{match.group(1)}-day decrease window")
+
+    return [
+        "; ".join(volume_parts) or note,
+        rate,
+        "; ".join(recency_parts),
+    ]
 
 
 @lru_cache(maxsize=1)
@@ -689,13 +793,13 @@ def blocker_action_summary(packet: dict[str, Any], analysis: dict[str, Any]) -> 
         actions.append(
             {
                 "category": "evidence",
-                "issue": "Competitor evidence does not yet validate several proposed attributes",
+                "issue": "Several proposed attributes still need stronger market proof",
                 "why": (
                     f"The current caution is being driven by evidence blind spots, not proof the concept is wrong. "
                     f"Right now competitor records do not clearly confirm attributes such as {gap_preview}."
                 ),
                 "action": (
-                    "Treat these as validation items, not automatic negatives: keep intentional innovations, "
+                    "Treat these as review items, not automatic negatives: keep intentional innovations, "
                     "confirm whether each item is a real customer requirement or compliance need, and only cut it if it adds cost without demand support."
                 ),
                 "impact": "Confidence; Market Support; Outlook",
@@ -707,7 +811,7 @@ def blocker_action_summary(packet: dict[str, Any], analysis: dict[str, Any]) -> 
         actions.append(
             {
                 "category": "evidence",
-                "issue": "A few proposed attributes still need market validation",
+                "issue": "A few proposed attributes still need stronger market proof",
                 "why": (
                     f"The concept includes attributes that are not yet well confirmed in competitor evidence, including {gap_preview}."
                 ),
@@ -724,7 +828,7 @@ def blocker_action_summary(packet: dict[str, Any], analysis: dict[str, Any]) -> 
                 "category": "evidence",
                 "issue": "Some differentiator claims still rest on thin evidence",
                 "why": f"The market set only weakly supports items such as {weak_preview}, so the report should treat them as directional rather than proven gaps or advantages.",
-                "action": "Use these as hypotheses to validate, not reasons to downscore the concept unless stronger competitor evidence later contradicts them.",
+                "action": "Use these as demand hypotheses, not reasons to downscore the concept unless stronger competitor evidence later contradicts them.",
                 "impact": "Confidence; Outlook",
             }
         )
@@ -895,9 +999,39 @@ def source_link_cell(url: Any, label: str = "Open source") -> dict[str, str] | s
 def source_link_from_item(item: dict[str, Any], label: str = "Open PDP") -> dict[str, str] | str:
     """Return a short hyperlink payload for a competitor item."""
     url = optional_text(item.get("url"))
-    if not url:
+    if not url or product_url_issue(url, resolved_source_channel(item)):
         return ""
     return source_link_cell(url, label)
+
+
+def product_url_issue(url: Any, source_channel: str | None = None) -> str:
+    """Return why a URL should not be shown as a verified product PDP."""
+    text = optional_text(url)
+    if not text or text.startswith("stackline://"):
+        return ""
+    parsed = urlparse(text)
+    host = parsed.netloc.lower().replace("www.", "")
+    path_parts = [part for part in parsed.path.strip("/").split("/") if part]
+    channel = (source_channel or "").lower()
+
+    if (channel == "amazon" or host.endswith("amazon.com")) and len(path_parts) >= 2 and path_parts[0].lower() in {"dp", "gp"}:
+        candidate = path_parts[-1]
+        if not re.fullmatch(r"[A-Z0-9]{10}", candidate.upper()):
+            return "Amazon URL does not contain a valid ASIN."
+
+    if channel == "home_depot" or host.endswith("homedepot.com"):
+        if len(path_parts) >= 2 and path_parts[0].lower() == "p":
+            last_part = path_parts[-1]
+            if re.fullmatch(r"[A-Z0-9]{10}", last_part.upper()):
+                return "Home Depot URL appears to use an Amazon ASIN."
+            if len(path_parts) == 2 and not re.fullmatch(r"\d{6,}", last_part):
+                return "Home Depot URL appears to be a synthetic non-item URL."
+
+    if channel == "walmart" or host.endswith("walmart.com"):
+        if len(path_parts) >= 2 and path_parts[0].lower() == "ip" and not re.fullmatch(r"\d{6,}", path_parts[-1]):
+            return "Walmart URL does not contain a numeric item ID."
+
+    return ""
 
 
 def normalize_opportunity_type(value: Any) -> str:
@@ -966,6 +1100,8 @@ def match_quality_for_item(item: dict[str, Any]) -> str:
     """Return the shared match-quality label for a competitor item."""
     if not item:
         return MATCH_QUALITY_NOT_COMPARABLE
+    if product_url_issue(item.get("url"), resolved_source_channel(item)):
+        return MATCH_QUALITY_NOT_COMPARABLE
     confidence = decimal_from_value(item.get("match_confidence"))
     if verification_status(item) == "verified_listing" and confidence is not None and confidence >= Decimal("0.80"):
         return MATCH_QUALITY_APPLES
@@ -978,6 +1114,8 @@ def link_status_for_item(item: dict[str, Any]) -> str:
     """Return a visible link-status label for manual PM verification."""
     if not item or not optional_text(item.get("url")):
         return LINK_STATUS_MISSING
+    if product_url_issue(item.get("url"), resolved_source_channel(item)):
+        return LINK_STATUS_INVALID
     if verification_status(item) == "verified_listing":
         return LINK_STATUS_VERIFIED
     return LINK_STATUS_NEEDS_CHECK
@@ -1108,8 +1246,8 @@ def product_difference_summary(packet: dict[str, Any], analysis: dict[str, Any])
 
     role = reference_anchor.get("primary_use")
     if role:
-        return f"Closest Sunco item is mainly a schema anchor; exact spec delta is limited in the current packet. {normalize_text(role)}"
-    return "No close Sunco/NSL anchor was available in the current packet."
+        return f"Closest Sunco item is mainly a category anchor; exact spec difference needs PM review. {normalize_text(role)}"
+    return "No close Sunco/NSL anchor was available for this row."
 
 
 def product_fit_classification(packet: dict[str, Any]) -> str:
@@ -1134,10 +1272,10 @@ def related_sunco_sales_trend(reference: dict[str, Any]) -> str:
     amazon = reference.get("amazon_revenue_12mo")
     if shopify is not None or amazon is not None:
         return (
-            "Trend not available in current packet; use 12mo anchor revenue only "
+            "Monthly trend was not refreshed for this run; 12-month anchor revenue is available "
             f"(Shopify {money_or_blank(shopify) or 'n/a'}, Amazon {money_or_blank(amazon) or 'n/a'})."
         )
-    return "Trend not available in current packet."
+    return "Monthly trend was not refreshed for this run."
 
 
 def related_sales_caution(reference: dict[str, Any]) -> str:
@@ -1146,8 +1284,8 @@ def related_sales_caution(reference: dict[str, Any]) -> str:
     lowered = trend.lower()
     if "declining" in lowered:
         return "Related anchor appears declining; use it as category context, not as proof of upside, until the decline driver is known."
-    if "trend not available" in lowered:
-        return "The report has 12mo anchor volume but no monthly trend field, so it should not claim growing or declining related Sunco sales yet."
+    if "monthly trend was not refreshed" in lowered:
+        return "12-month revenue is available, but monthly trend was not refreshed for this run."
     return "No weak/declining related-sales caution surfaced from available packet fields."
 
 
@@ -1207,14 +1345,14 @@ def channel_strategy(packet: dict[str, Any], analysis: dict[str, Any]) -> str:
     amazon_score = decimal_from_value(amazon_snapshot.get("weighted_score"))
 
     if "shopify/front-end launch review first" in notes:
-        return "Shopify/front-end first; Amazon follow-up if Stackline, pack economics, and margin support."
+        return "Shopify-first"
     if "amazon stackline" in name:
-        return "Amazon-first; add Shopify if assortment and margin story remain clean."
+        return "Amazon-first"
     if outlook == "favorable" and amazon_score is not None and amazon_score >= Decimal("7") and evidence.get("ecommerce_movement"):
         return "Amazon + Shopify"
     if outlook in {"mixed", "cautious"}:
         return "Staged test"
-    return "Both channels if pricing and certification requirements stay clean."
+    return "Amazon + Shopify"
 
 
 def certification_summary(packet: dict[str, Any], analysis: dict[str, Any]) -> str:
@@ -1314,6 +1452,210 @@ def compact_competitor_read(item: dict[str, Any]) -> str:
     return " | ".join(piece for piece in pieces if piece)
 
 
+def product_identifier(item: dict[str, Any]) -> str:
+    """Return the SKU/model/ASIN value without the channel prefix."""
+    if not item:
+        return ""
+    source_channel = resolved_source_channel(item)
+    sku = optional_text(item.get("sku"))
+    model = optional_text(item.get("model_number"))
+    if source_channel == "amazon" and sku:
+        return sku
+    return model or sku or listing_identifier(item)
+
+
+def directional_identifier(item: dict[str, Any]) -> str:
+    """Return an identifier that does not imply an unverified retailer PDP exists."""
+    issue = product_url_issue(item.get("url"), resolved_source_channel(item))
+    if verification_status(item) == "verified_listing" and not issue:
+        return product_identifier(item)
+    value = (
+        optional_text(item.get("model_number"))
+        or optional_text(item.get("retailer_sku"))
+        or optional_text(item.get("sku"))
+        or listing_identifier(item)
+    )
+    return f"Unverified ID {value}" if value else ""
+
+
+def directional_channel_label(item: dict[str, Any]) -> str:
+    """Return a channel label that separates discovery seeds from verified PDPs."""
+    issue = product_url_issue(item.get("url"), resolved_source_channel(item))
+    if verification_status(item) == "verified_listing" and not issue:
+        return source_channel_label(item)
+    if issue:
+        return "Unverified retailer seed"
+    source = discovery_source_label(item)
+    return f"{source} discovery seed" if source else "Discovery seed"
+
+
+def directional_supporting_source_label(item: dict[str, Any]) -> str:
+    """Return source context for unverified rows without claiming a PDP exists."""
+    issue = product_url_issue(item.get("url"), resolved_source_channel(item))
+    if issue:
+        return "PDP not verified"
+    return discovery_source_label(item)
+
+
+def product_pack_size(item: dict[str, Any]) -> str:
+    """Return pack/size context for competitor tables."""
+    if not item:
+        return ""
+    parts = []
+    pack_quantity = item.get("pack_quantity")
+    if pack_quantity not in (None, "", []):
+        parts.append(f"Pack {display_value_for_label('Count', pack_quantity)}")
+    for key in ["size", "size_form_factor", "length", "dimensions"]:
+        value = item.get(key)
+        if value not in (None, "", []):
+            parts.append(normalize_text(value))
+            break
+    return "; ".join(parts)
+
+
+def product_key_specs(item: dict[str, Any]) -> str:
+    """Return short spec context for product-level competitor rows."""
+    if not item:
+        return ""
+    parts: list[str] = []
+    for label, key in [
+        ("W", "wattage"),
+        ("lm", "lumens"),
+        ("CCT", "cct"),
+        ("V", "voltage"),
+        ("CRI", "cri"),
+        ("Features", "features"),
+        ("Certs", "certifications"),
+    ]:
+        value = item.get(key)
+        if value not in (None, "", []):
+            parts.append(f"{label}: {normalize_text(value)}")
+    return "; ".join(parts[:5])
+
+
+def competitor_name(item: dict[str, Any]) -> str:
+    """Return the competitor/brand label for tables."""
+    return (
+        normalize_text(as_dict(item).get("brand"))
+        or normalize_text(as_dict(item).get("approved_competitor"))
+        or source_channel_label(item)
+    )
+
+
+def recommendation_priority(analysis: dict[str, Any]) -> str:
+    """Return the move-forward read for PM-facing action tables."""
+    outlook = normalize_text(as_dict(analysis.get("performance_estimation")).get("launch_outlook")).lower()
+    if outlook == "favorable":
+        return "Strong Move-Forward Candidate"
+    if outlook == "cautious":
+        return "Hold / Do Not Prioritize Yet"
+    return "Review Further Before Moving Forward"
+
+
+def decision_read_label(analysis: dict[str, Any]) -> str:
+    """Return a short go-forward decision label."""
+    priority = recommendation_priority(analysis)
+    if priority == "Strong Move-Forward Candidate":
+        return "Pursue"
+    if priority == "Hold / Do Not Prioritize Yet":
+        return "Hold for now"
+    return "Review further"
+
+
+def opportunity_type_reason(packet: dict[str, Any], analysis: dict[str, Any]) -> str:
+    """Explain the opportunity type without exposing backend vocabulary logic."""
+    evidence = extract_research_note_evidence(packet)
+    coverage = normalize_text(evidence.get("sunco_coverage"))
+    if coverage:
+        return coverage
+    return product_difference_summary(packet, analysis)
+
+
+def source_label_or_blank(source: Any) -> str:
+    """Return a compact non-link source label."""
+    text = normalize_text(source)
+    if not text:
+        return ""
+    return text
+
+
+def observed_market_price_range(pricing: dict[str, Any]) -> str:
+    """Return a compact market-price range from available benchmarks."""
+    suggested = as_dict(pricing.get("suggested_msrp_range"))
+    floor = suggested.get("observed_unit_price_floor") or suggested.get("recommended_floor")
+    ceiling = suggested.get("observed_unit_price_ceiling") or suggested.get("recommended_ceiling")
+    median = as_dict(pricing.get("unit_price_benchmarks")).get("median") or as_dict(pricing.get("price_benchmarks")).get("median")
+    parts = []
+    if floor is not None:
+        parts.append(f"Low/P25 {display_value_for_label('Price', floor)}")
+    if median is not None:
+        parts.append(f"Median {display_value_for_label('Price', median)}")
+    if ceiling is not None:
+        parts.append(f"High/P75 {display_value_for_label('Price', ceiling)}")
+    return "; ".join(parts)
+
+
+def margin_read(pricing: dict[str, Any]) -> str:
+    """Return a PM-facing margin read."""
+    suggested = as_dict(pricing.get("suggested_msrp_range"))
+    if suggested.get("margin_conflict"):
+        return "Margin risk"
+    minimum_margin_safe = decimal_from_value(suggested.get("minimum_margin_safe_price"))
+    target_msrp = decimal_from_value(pricing.get("target_msrp"))
+    if minimum_margin_safe is not None and target_msrp is not None:
+        if target_msrp < minimum_margin_safe:
+            return "Below margin floor"
+        if target_msrp <= minimum_margin_safe * Decimal("1.05"):
+            return "Near margin floor"
+        return "Meets landed margin target"
+    return "Needs quote before price can be trusted"
+
+
+def price_position_read(pricing: dict[str, Any]) -> str:
+    """Return a compact price-position read."""
+    target_position = as_dict(pricing.get("target_price_position"))
+    percentile = target_position.get("percentile")
+    bucket = normalize_text(target_position.get("bucket")).replace("_", " ")
+    if percentile is not None and bucket:
+        return f"{display_value_for_label('Percentile', percentile)} percentile; {bucket}"
+    return normalize_text(as_dict(pricing.get("suggested_msrp_range")).get("positioning"))
+
+
+def channel_strategy_label(packet: dict[str, Any], analysis: dict[str, Any]) -> str:
+    """Return controlled PM-facing channel labels."""
+    text = channel_strategy(packet, analysis).lower()
+    if "shopify" in text and "amazon" in text and ("both" in text or "+" in text):
+        return "Amazon + Shopify"
+    if "shopify" in text and ("first" in text or "front-end" in text):
+        return "Shopify-first"
+    if "amazon" in text and "first" in text:
+        return "Amazon-first"
+    if "staged" in text:
+        return "Staged test"
+    if "do not" in text or "hold" in text:
+        return "Do not launch yet"
+    if "both" in text or ("amazon" in text and "shopify" in text):
+        return "Amazon + Shopify"
+    return "Staged test"
+
+
+def channel_reason(packet: dict[str, Any], analysis: dict[str, Any]) -> str:
+    """Explain the channel label in PM-facing language."""
+    label = channel_strategy_label(packet, analysis)
+    evidence = extract_research_note_evidence(packet)
+    if label == "Shopify-first":
+        return "Competitor ecommerce movement is stronger than current Amazon proof."
+    if label == "Amazon-first":
+        return "Amazon demand proof is the strongest available channel signal."
+    if label == "Amazon + Shopify":
+        return "Both Amazon and ecommerce/front-end evidence support a broader launch read."
+    if label == "Do not launch yet":
+        return "Demand or margin support is not strong enough yet."
+    if evidence.get("ecommerce_movement"):
+        return "Evidence is mixed; use a limited test before broad launch."
+    return "Channel evidence is still directional."
+
+
 def pm_decision_snapshot_rows(
     row_number: int,
     packet: dict[str, Any],
@@ -1331,25 +1673,23 @@ def pm_decision_snapshot_rows(
     competitor_match = match_quality_for_item(competitor)
     competitor_link = source_link_from_item(competitor) if competitor else primary_source_link(packet, normalized)
     evidence = extract_research_note_evidence(packet)
-    pricing_link = source_link_cell(evidence.get("review_link"), "Open price source") or competitor_link
-    decision = "Pursue" if normalize_text(as_dict(analysis.get("performance_estimation")).get("launch_outlook")).lower() == "favorable" else "Stage test / refine"
-    if normalize_text(as_dict(analysis.get("performance_estimation")).get("launch_outlook")).lower() == "cautious":
-        decision = "Revise before pursuit"
+    pricing_link = source_link_cell(evidence.get("review_link"), "Open price source")
+    decision = decision_read_label(analysis)
 
     return [
         [
             "Concept Tracking Name",
             concept_tracking_name(packet),
             evidence_strength,
-            f"Row {row_number}; tracking name is generated from SKU Decoder cache and Step 2 target specs.",
+            "Working concept name based on target product type, wattage, CCT, and feature set. Not a final SKU.",
             "",
         ],
         [
             "Opportunity Type",
             opportunity_type,
             evidence_strength,
-            "Uses the same Step 1-3 opportunity vocabulary so PMs do not need to relearn the classification at each step.",
-            primary_source_link(packet, normalized),
+            opportunity_type_reason(packet, analysis),
+            "",
         ],
         [
             "Decision Read",
@@ -1377,7 +1717,7 @@ def pm_decision_snapshot_rows(
             opportunity_type,
             evidence_strength,
             evidence.get("sunco_coverage") or product_difference_summary(packet, analysis),
-            primary_source_link(packet, normalized),
+            "",
         ],
         [
             "Closest Sunco / NSL Anchor",
@@ -1402,16 +1742,16 @@ def pm_decision_snapshot_rows(
         ],
         [
             "Channel Strategy",
-            channel_strategy(packet, analysis),
+            channel_strategy_label(packet, analysis),
             evidence_strength,
-            market_momentum_summary(packet, analysis),
-            primary_source_link(packet, normalized),
+            channel_reason(packet, analysis),
+            "",
         ],
         [
             "Main Watchout",
             first_sentence(action_summary.get("why_not_stronger")),
             EVIDENCE_STRENGTH_REVIEW if action_summary.get("why_not_stronger") else evidence_strength,
-            "Use this as the first follow-up question if the concept moves toward vendor quote or sample work.",
+            "Use this as the first follow-up before leadership review, PRD build, or vendor RFQ.",
             "",
         ],
     ]
@@ -1436,13 +1776,87 @@ def write_pm_decision_snapshot(
     )
 
 
-DECISION_EVIDENCE_HEADERS = [
-    "Opportunity Type",
-    "Evidence Strength",
+DEMAND_PROOF_HEADERS = [
+    "Competitor",
+    "Product Name",
+    "SKU / Model / ASIN",
+    "Price",
+    "Demand Volume",
+    "Demand Rate / Share",
+    "Demand Recency / Window",
+    "Product Link",
     "Match Quality",
-    "Evidence",
-    "Source Link",
     "PM Read",
+]
+SUNCO_COVERAGE_HEADERS = [
+    "Sunco / NSL SKU",
+    "Product Name",
+    "Shopify Revenue",
+    "Shopify Units Sold",
+    "Amazon Revenue",
+    "Amazon Units Sold",
+    "Total Revenue",
+    "Coverage Read",
+    "Gap vs Ideation",
+    "Product Link / Source",
+]
+COMPETITOR_COMPARABLE_HEADERS = [
+    "Channel",
+    "Competitor",
+    "Product Name",
+    "SKU / Model / ASIN",
+    "Price",
+    "Pack / Size",
+    "Key Specs",
+    "Demand Volume",
+    "Demand Rate / Share",
+    "Demand Recency / Window",
+    "Match Quality",
+    "Product Link",
+    "PM Read",
+]
+SOURCE_DETAIL_HEADERS = [
+    "Brand",
+    "Product Name",
+    "SKU / Model / ASIN",
+    "Channel",
+    "Price",
+    "Key Specs",
+    "Demand Volume",
+    "Demand Rate / Share",
+    "Demand Recency / Window",
+    "Match Quality",
+    "Product Link",
+    "Link Status",
+    "Source Basis",
+]
+APPROVED_SOURCE_COVERAGE_HEADERS = [
+    "Approved Competitor",
+    "Domain",
+    "Tier",
+    "Scope",
+    "Current Snapshot Status",
+    "Warehouse Coverage",
+    "Discovery Link",
+    "Next Step",
+]
+PRICING_CHANNEL_HEADERS = [
+    "Recommended MSRP",
+    "Target Vendor Cost",
+    "Observed Market Price Range",
+    "Price Position",
+    "Margin Read",
+    "Recommended Channel",
+    "Channel Reason",
+    "Source Link",
+]
+WATCHOUT_HEADERS = [
+    "Watchout",
+    "Risk Level",
+    "Why It Matters",
+    "Next Checkpoint",
+    "Recommended Follow-Up",
+    "Source / Evidence",
 ]
 
 
@@ -1454,135 +1868,145 @@ def top_verified_items(normalized: dict[str, Any], channels: set[str], limit: in
             continue
         if verification_status(item) != "verified_listing":
             continue
+        if product_url_issue(item.get("url"), resolved_source_channel(item)):
+            continue
         rows.append(item)
         if len(rows) >= limit:
             break
     return rows
 
 
-def evidence_row(
-    packet: dict[str, Any],
-    analysis: dict[str, Any],
-    match_quality: str,
-    evidence: Any,
-    source_link: Any,
-    pm_read: Any,
-) -> list[Any]:
-    """Build a standardized evidence row using shared Step 1-3 vocabulary."""
-    return [
-        opportunity_type_for(packet, analysis),
-        evidence_strength_for(packet, analysis),
-        match_quality,
-        evidence,
-        source_link,
-        pm_read,
-    ]
-
-
 def demand_proof_rows(packet: dict[str, Any], analysis: dict[str, Any], normalized: dict[str, Any]) -> list[list[Any]]:
-    """Summarize the strongest demand evidence without exposing every raw field."""
+    """Build product-level demand proof rows."""
     evidence = extract_research_note_evidence(packet)
-    performance = as_dict(analysis.get("performance_estimation"))
-    snapshot = as_dict(performance.get("market_snapshot"))
     rows: list[list[Any]] = []
-    if evidence.get("ecommerce_movement"):
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in verified_scraped_competitor_items(packet, limit=3) + top_verified_items(normalized, AMAZON_CHANNELS | BM_DIRECT_CHANNELS, 3):
+        key = optional_text(item.get("url")) or product_identifier(item) or clean_slide_text(item.get("product_title"), 120)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+        if len(items) >= 3:
+            break
+    for item in items:
         rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                MATCH_QUALITY_SIMILAR,
-                evidence["ecommerce_movement"],
-                primary_source_link(packet, normalized),
-                "Competitor inventory movement supports a demand read, but PM should confirm the linked PDP matches the exact target spec.",
-            )
-        )
-    if snapshot.get("segment_name"):
-        rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                MATCH_QUALITY_SIMILAR,
-                market_momentum_summary(packet, analysis),
-                "",
-                "Use Stackline as category/segment demand support, not as a replacement for exact PDP matching.",
-            )
-        )
-    if evidence.get("inventory_support"):
-        rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                MATCH_QUALITY_SIMILAR,
-                evidence["inventory_support"],
-                primary_source_link(packet, normalized),
-                "Inventory support is a directional movement signal for the normalized spec cluster.",
-            )
+            [
+                competitor_name(item),
+                clean_slide_text(item.get("product_title"), 120),
+                product_identifier(item),
+                item.get("price"),
+                *item_demand_signal_parts(item),
+                source_link_from_item(item),
+                match_quality_for_item(item),
+                "Product-level demand support; cite when the PDP visibly matches the target spec.",
+            ]
         )
     if not rows:
         rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                MATCH_QUALITY_NOT_COMPARABLE,
-                "No structured demand proof was captured for this row.",
+            [
                 "",
-                "Treat as a PM review item before using demand as the main selling point.",
-            )
+                "",
+                "",
+                "",
+                *demand_signal_parts_from_text(evidence.get("ecommerce_movement") or "No structured demand proof captured."),
+                "",
+                MATCH_QUALITY_NOT_COMPARABLE,
+                "No product-level demand proof yet; use only as directional context.",
+            ]
         )
-    return rows[:3]
+    return rows
 
 
 def sunco_coverage_decision_rows(packet: dict[str, Any], analysis: dict[str, Any], normalized: dict[str, Any]) -> list[list[Any]]:
-    """Summarize Sunco coverage and gap evidence."""
+    """Summarize Sunco coverage using channel revenue and units."""
     identity = as_dict(packet.get("identity"))
     reference = as_dict(packet.get("reference_baseline"))
     evidence = extract_research_note_evidence(packet)
-    anchor = f"{normalize_text(identity.get('sunco_reference_sku'))} - {normalize_text(reference.get('title'))}".strip(" -")
+    shopify_revenue = decimal_from_value(reference.get("shopify_revenue_12mo")) or Decimal("0")
+    amazon_revenue = decimal_from_value(reference.get("amazon_revenue_12mo")) or Decimal("0")
+    total_revenue = shopify_revenue + amazon_revenue
+    trend_note = related_sunco_sales_trend(reference)
+    if "trend not available" in trend_note.lower():
+        trend_note = "12-month revenue is available, but monthly trend was not refreshed for this run."
     return [
-        evidence_row(
-            packet,
-            analysis,
-            MATCH_QUALITY_SIMILAR if anchor else MATCH_QUALITY_NOT_COMPARABLE,
+        [
+            identity.get("sunco_reference_sku"),
+            reference.get("title"),
+            reference.get("shopify_revenue_12mo"),
+            reference.get("shopify_units_12mo"),
+            reference.get("amazon_revenue_12mo"),
+            reference.get("amazon_units_12mo"),
+            float(total_revenue),
+            trend_note,
             evidence.get("sunco_coverage") or product_difference_summary(packet, analysis),
-            primary_source_link(packet, normalized),
-            "This is the main line-review read: confirm whether the gap is a new SKU, variant depth, or merchandising/revision work.",
-        ),
-        evidence_row(
-            packet,
-            analysis,
-            MATCH_QUALITY_SIMILAR if anchor else MATCH_QUALITY_NOT_COMPARABLE,
-            anchor or "No close Sunco/NSL anchor captured.",
-            "",
-            related_sales_caution(reference),
-        ),
+            source_label_or_blank(reference.get("reference_data_source")),
+        ]
     ]
 
 
 def competitor_decision_rows(packet: dict[str, Any], analysis: dict[str, Any], normalized: dict[str, Any]) -> list[list[Any]]:
-    """Summarize the top competitor comparables with visible links."""
+    """Summarize top competitor comparables with exact product links."""
     rows: list[list[Any]] = []
-    for item in top_verified_items(normalized, AMAZON_CHANNELS, 2) + top_verified_items(normalized, BM_DIRECT_CHANNELS, 2):
+    for item in top_verified_items(normalized, AMAZON_CHANNELS | BM_DIRECT_CHANNELS, 5):
+        match_quality = match_quality_for_item(item)
+        pm_read = "Use as primary comp" if match_quality == MATCH_QUALITY_APPLES else "Use as directional price/spec comp"
         rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                match_quality_for_item(item),
-                compact_competitor_read(item),
+            [
+                source_channel_label(item),
+                competitor_name(item),
+                clean_slide_text(item.get("product_title"), 120),
+                product_identifier(item),
+                item.get("price"),
+                product_pack_size(item),
+                product_key_specs(item),
+                *item_demand_signal_parts(item),
+                match_quality,
                 source_link_from_item(item),
-                f"{link_status_for_item(item)}; {item_demand_signal(item) or 'Use the linked PDP to verify product attributes.'}",
-            )
+                pm_read,
+            ]
         )
     if not rows:
-        rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                MATCH_QUALITY_NOT_COMPARABLE,
-                "No verified competitor comparables were captured.",
-                primary_source_link(packet, normalized),
-                "Do not present this as apples-to-apples until a comparable PDP is verified.",
-            )
+        rows.append(["", "", "No verified competitor comparables were captured.", "", "", "", "", "", "", MATCH_QUALITY_NOT_COMPARABLE, "", "Do not cite until a product link is verified."])
+    return rows
+
+
+def directional_competitor_rows(packet: dict[str, Any], analysis: dict[str, Any], normalized: dict[str, Any]) -> list[list[Any]]:
+    """Return weaker or inferred comparables for discovery only."""
+    rows: list[list[Any]] = []
+    for item in sort_candidates(as_list(normalized.get("items"))):
+        if len(rows) >= 5:
+            break
+        if verification_status(item) == "verified_listing" and match_quality_for_item(item) == MATCH_QUALITY_APPLES:
+            continue
+        issue = product_url_issue(item.get("url"), resolved_source_channel(item))
+        verified = verification_status(item) == "verified_listing" and not issue
+        link = source_link_from_item(item) if verified else ""
+        pm_read = (
+            "Directional only; source product PDP is verified, but specs are not apples-to-apples."
+            if verified
+            else "Discovery only; needs a verified product PDP before citation."
         )
+        if issue:
+            pm_read = f"Discovery only; {issue} Needs a verified product PDP before citation."
+        rows.append(
+            [
+                directional_channel_label(item),
+                competitor_name(item),
+                clean_slide_text(item.get("product_title"), 120),
+                directional_identifier(item),
+                item.get("price"),
+                product_pack_size(item),
+                product_key_specs(item),
+                *item_demand_signal_parts(item),
+                match_quality_for_item(item),
+                link,
+                pm_read,
+            ]
+        )
+    if not rows:
+        rows.append(["", "", "No directional comparables captured.", "", "", "", "", "", "", MATCH_QUALITY_NOT_COMPARABLE, "", "No secondary comps available in this run."])
     return rows
 
 
@@ -1590,33 +2014,43 @@ def pricing_channel_decision_rows(packet: dict[str, Any], analysis: dict[str, An
     """Summarize MSRP, cost, and channel positioning."""
     pricing = as_dict(analysis.get("pricing_analysis"))
     evidence = extract_research_note_evidence(packet)
-    price_link = source_link_cell(evidence.get("review_link"), "Open price source") or primary_source_link(packet, normalized)
+    price_link = source_link_cell(evidence.get("review_link"), "Open price source")
     return [
-        evidence_row(
-            packet,
-            analysis,
-            MATCH_QUALITY_SIMILAR,
-            f"Recommended MSRP: {display_value_for_label('Recommended MSRP', pricing.get('target_msrp'))}",
+        [
+            pricing.get("target_msrp"),
+            pricing.get("target_vendor_cost"),
+            observed_market_price_range(pricing),
+            price_position_read(pricing),
+            margin_read(pricing),
+            channel_strategy_label(packet, analysis),
+            channel_reason(packet, analysis),
             price_link,
-            msrp_basis_summary(packet, analysis),
-        ),
-        evidence_row(
-            packet,
-            analysis,
-            MATCH_QUALITY_SIMILAR,
-            f"Target vendor cost: {display_value_for_label('Target Vendor Cost', pricing.get('target_vendor_cost'))}",
-            "",
-            "Backsolved as landed-cost ceiling from the 50-55% pre-ads gross-margin policy midpoint.",
-        ),
-        evidence_row(
-            packet,
-            analysis,
-            MATCH_QUALITY_SIMILAR,
-            channel_strategy(packet, analysis),
-            primary_source_link(packet, normalized),
-            "Use this as the launch-channel recommendation unless PM review finds a better channel constraint.",
-        ),
+        ]
     ]
+
+
+def risk_level_from_action(issue: str, analysis: dict[str, Any]) -> str:
+    """Map action/watchout language into PM-facing risk levels."""
+    lowered = normalize_text(issue).lower()
+    if recommendation_priority(analysis) == "Hold / Do Not Prioritize Yet":
+        return "High"
+    if any(term in lowered for term in ["margin", "cost", "quote", "certification", "competitor match"]):
+        return "High"
+    if any(term in lowered for term in ["evidence", "pricing", "sunco", "overlap"]):
+        return "Medium"
+    return "Low"
+
+
+def checkpoint_from_action(issue: str) -> str:
+    """Return the Step 3-scope checkpoint for a watchout."""
+    lowered = normalize_text(issue).lower()
+    if any(term in lowered for term in ["data", "evidence", "trend"]):
+        return "Data Refresh Needed"
+    if any(term in lowered for term in ["quote", "cost", "margin", "vendor"]):
+        return "Before Vendor RFQ"
+    if any(term in lowered for term in ["spec", "certification", "prd"]):
+        return "Before PRD Build"
+    return "Before Leadership Review"
 
 
 def risk_watchout_rows(packet: dict[str, Any], analysis: dict[str, Any], action_summary: dict[str, Any]) -> list[list[Any]]:
@@ -1627,27 +2061,29 @@ def risk_watchout_rows(packet: dict[str, Any], analysis: dict[str, Any], action_
         issue = action_row[1] if len(action_row) > 1 else ""
         why = action_row[2] if len(action_row) > 2 else ""
         recommendation = action_row[3] if len(action_row) > 3 else ""
+        rows.append([issue, risk_level_from_action(issue, analysis), why, checkpoint_from_action(issue), recommendation, ""])
+    if not rows:
+        rows.append(["No major watchout generated", "Low", "The concept does not currently show a major blocker in the available analysis.", "Before Leadership Review", "Protect the assumptions through PRD and RFQ work.", ""])
+    return rows
+
+
+def pm_action_checklist_rows(analysis: dict[str, Any], action_summary: dict[str, Any]) -> list[list[Any]]:
+    """Return PM-facing next actions without internal P1/P2/P3 codes."""
+    priority = recommendation_priority(analysis)
+    rows: list[list[Any]] = []
+    for action in as_list(action_summary.get("actions")):
+        action_row = as_list(action)
         rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                MATCH_QUALITY_SIMILAR,
-                f"{issue}: {why}",
-                "",
-                recommendation,
-            )
+            [
+                priority,
+                action_row[1] if len(action_row) > 1 else "",
+                action_row[2] if len(action_row) > 2 else "",
+                action_row[3] if len(action_row) > 3 else "",
+                action_row[4] if len(action_row) > 4 else "",
+            ]
         )
     if not rows:
-        rows.append(
-            evidence_row(
-                packet,
-                analysis,
-                MATCH_QUALITY_SIMILAR,
-                "No major watchout was generated from the current analysis.",
-                "",
-                "Protect the assumptions as quotes, samples, certifications, and channel details firm up.",
-            )
-        )
+        rows.append([priority, "No immediate issue surfaced", "Current evidence supports a normal PM review.", "Review the summary and source links before presenting.", "Leadership readiness"])
     return rows
 
 
@@ -1763,6 +2199,13 @@ def source_channel_label(item: dict[str, Any]) -> str:
     return CHANNEL_DISPLAY_NAMES.get(channel, channel.replace("_", " ").title() or "Unknown")
 
 
+def source_detail_channel_label(item: dict[str, Any]) -> str:
+    """Render the channel label used in source-detail tables."""
+    if optional_text(item.get("collection_method")) == "redshift_ecommerce_snapshot":
+        return short_domain(item.get("source_domain") or item.get("url")) or "Verified direct competitor"
+    return source_channel_label(item)
+
+
 def discovery_source_label(item: dict[str, Any]) -> str:
     """Render the original discovery source for inferred competitors."""
     domain = optional_text(item.get("discovery_source_domain"))
@@ -1840,10 +2283,10 @@ def listing_identifier(item: dict[str, Any]) -> str:
 def listing_link_cell(item: dict[str, Any]) -> dict[str, str] | str:
     """Return a hyperlink cell payload for a competitor source listing."""
     url = optional_text(item.get("url"))
-    if not url or url.startswith("stackline://"):
+    if not url or url.startswith("stackline://") or product_url_issue(url, resolved_source_channel(item)):
         return ""
     return {
-        "value": source_channel_label(item),
+        "value": source_detail_channel_label(item),
         "hyperlink": url,
     }
 
@@ -1851,6 +2294,8 @@ def listing_link_cell(item: dict[str, Any]) -> dict[str, str] | str:
 def verification_status(item: dict[str, Any]) -> str:
     """Return the normalized verification status for one competitor record."""
     status = (optional_text(item.get("verification_status")) or "").lower()
+    if status == "verified_listing" and product_url_issue(item.get("url"), resolved_source_channel(item)):
+        return "inferred_competitor"
     if status in {"verified_listing", "inferred_competitor"}:
         return status
     return "verified_listing"
@@ -1909,12 +2354,67 @@ def candidate_rows(
     return rows
 
 
-def item_demand_signal(item: dict[str, Any]) -> str:
-    """Return movement or demand evidence attached to one competitor item."""
-    observations = [normalize_text(value) for value in as_list(item.get("raw_observations")) if normalize_text(value)]
-    if observations:
-        return "; ".join(observations[:3])
+def item_demand_signal_parts(item: dict[str, Any]) -> list[str]:
+    """Return demand evidence as volume, rate/share, and recency/window columns."""
+    volume = ""
+    rate_or_share = ""
+    recency_window = ""
 
+    decrease = first_number_from_fields(item, ["observed_stock_decrease", "stock_decrease_units", "inventory_movement"])
+    decrease_events = first_number_from_fields(item, ["decrease_events", "stock_decrease_events"])
+    if decrease is not None and decrease > 0:
+        volume = f"{display_number(decrease)} stock decrease units"
+        if decrease_events is not None and decrease_events > 0:
+            volume += f"; {display_number(decrease_events)} decrease events"
+    else:
+        stackline_units = first_number_from_fields(item, ["units_sold"]) or number_from_observation(item, "Stackline units_sold")
+        if stackline_units is not None and stackline_units > 0:
+            volume = f"{display_number(stackline_units)} Stackline units sold"
+
+    velocity = first_number_from_fields(
+        item,
+        ["velocity_units_per_week", "avg_units_per_week_decrease_window", "avg_units_per_week_observed_window"],
+    )
+    if velocity is not None and velocity > 0:
+        rate_or_share = f"{display_number(velocity, 1)} units/week"
+    else:
+        sales_share = first_number_from_fields(item, ["sales_share_pct"]) or number_from_observation(item, "Stackline sales_share_pct")
+        if sales_share is not None and sales_share > 0:
+            rate_or_share = f"{display_number(sales_share, 1)}% Stackline sales share"
+        elif item.get("sales_rank") not in (None, ""):
+            rate_or_share = f"Sales rank {normalize_text(item.get('sales_rank'))}"
+
+    recency_parts: list[str] = []
+    days_since = first_number_from_fields(item, ["days_since_last_decrease"])
+    if days_since is not None:
+        recency_parts.append(f"{display_number(days_since)} days since last decrease")
+    latest_date = normalize_text(item.get("latest_inventory_scrape_date") or item.get("last_observed_date"))
+    if latest_date:
+        recency_parts.append(f"latest scrape {latest_date[:10]}")
+    observation_window = first_number_from_fields(item, ["observation_window_days"])
+    decrease_window = first_number_from_fields(item, ["decrease_window_days"])
+    if observation_window is not None and observation_window > 0:
+        recency_parts.append(f"{display_number(observation_window)}-day observed window")
+    if decrease_window is not None and decrease_window > 0:
+        recency_parts.append(f"{display_number(decrease_window)}-day decrease window")
+    if not recency_parts and (volume or rate_or_share) and any("Stackline" in normalize_text(value) for value in as_list(item.get("raw_observations"))):
+        recency_parts.append("Stackline segment period")
+    recency_window = "; ".join(recency_parts)
+
+    if not any([volume, rate_or_share, recency_window]):
+        observations = [normalize_text(value) for value in as_list(item.get("raw_observations")) if normalize_text(value)]
+        if observations:
+            legacy = demand_signal_parts_from_text("; ".join(observations[:3]))
+            return legacy
+
+    return [volume, rate_or_share, recency_window]
+
+
+def item_demand_signal(item: dict[str, Any]) -> str:
+    """Return compact demand evidence attached to one competitor item."""
+    parts = [part for part in item_demand_signal_parts(item) if normalize_text(part)]
+    if parts:
+        return "; ".join(parts)
     signal_keys = [
         "inventory_movement",
         "stock_decrease_units",
@@ -1967,22 +2467,203 @@ def detailed_candidate_rows(
         if verification_filter and verification_status(item) != verification_filter:
             continue
         rows.append(
-            [
-                item.get("brand"),
-                item.get("product_title"),
-                listing_identifier(item),
-                source_channel_label(item),
-                item.get("price"),
-                item_attribute_summary(item),
-                item_demand_signal(item),
-                match_quality_for_item(item),
-                listing_link_cell(item),
-                link_status_for_item(item),
-                discovery_source_label(item),
-            ]
+            source_detail_row(item)
         )
         if len(rows) >= limit:
             break
+    return rows
+
+
+def source_detail_row(item: dict[str, Any], source_basis: str | None = None) -> list[Any]:
+    """Build one Section B/C source-detail row."""
+    return [
+        item.get("brand"),
+        item.get("product_title"),
+        listing_identifier(item),
+        source_detail_channel_label(item),
+        item.get("price"),
+        product_key_specs(item) or item_attribute_summary(item),
+        *item_demand_signal_parts(item),
+        match_quality_for_item(item),
+        listing_link_cell(item),
+        link_status_for_item(item),
+        source_basis or discovery_source_label(item),
+    ]
+
+
+def ecommerce_cache_item_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert one Redshift ecommerce snapshot row to the report item shape."""
+    domain = short_domain(row.get("domain") or row.get("url"))
+    approved_source = approved_competitor_source_for_domain(domain) or {}
+    features: list[str] = []
+    if normalize_text(row.get("dimmable")) in {"1", "Yes", "true", "True"}:
+        features.append("dimmable")
+    if normalize_text(row.get("ip_rating")):
+        features.append(normalize_text(row.get("ip_rating")))
+    return {
+        "source_channel": "brand_site",
+        "source_domain": domain,
+        "discovery_source_channel": "redshift_ecommerce_snapshot",
+        "discovery_source_domain": domain,
+        "collection_method": "redshift_ecommerce_snapshot",
+        "approved_competitor": approved_source.get("competitor"),
+        "approved_source_tier": approved_source.get("tier"),
+        "brand": row.get("brand") or approved_source.get("competitor"),
+        "product_title": row.get("name"),
+        "model_number": row.get("sku"),
+        "sku": row.get("sku"),
+        "url": row.get("url"),
+        "price": decimal_from_value(row.get("price")) or row.get("price"),
+        "currency": row.get("currency") or "USD",
+        "wattage": row.get("wattage"),
+        "lumens": row.get("lumens"),
+        "cct": row.get("cct"),
+        "cri": row.get("cri"),
+        "voltage": row.get("voltage"),
+        "certifications": [value for value in [row.get("ip_rating")] if normalize_text(value)],
+        "features": features,
+        "image_url": row.get("image"),
+        "availability": row.get("availability") or row.get("stock_status"),
+        "observed_stock_decrease": row.get("observed_stock_decrease"),
+        "decrease_events": row.get("decrease_events"),
+        "observation_count": row.get("observation_count"),
+        "observation_window_days": row.get("observation_window_days"),
+        "decrease_window_days": row.get("decrease_window_days"),
+        "avg_units_per_week_observed_window": row.get("avg_units_per_week_observed_window"),
+        "avg_units_per_week_decrease_window": row.get("avg_units_per_week_decrease_window"),
+        "days_since_last_decrease": row.get("days_since_last_decrease"),
+        "latest_inventory_scrape_date": row.get("latest_inventory_scrape_date") or row.get("scraped_at"),
+        "verification_status": "verified_listing",
+        "verification_reason": "Verified direct competitor row from Redshift ecommerce scraper snapshot.",
+        "match_confidence": 0.9,
+    }
+
+
+def ecommerce_cache_sort_key(row: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal, str]:
+    """Sort Redshift ecommerce snapshot rows by observed movement and freshness."""
+    velocity = first_number_from_fields(
+        row,
+        ["avg_units_per_week_observed_window", "avg_units_per_week_decrease_window"],
+    ) or Decimal("0")
+    decrease = decimal_from_value(row.get("observed_stock_decrease")) or Decimal("0")
+    events = decimal_from_value(row.get("decrease_events")) or Decimal("0")
+    scraped_at = normalize_text(row.get("latest_inventory_scrape_date") or row.get("scraped_at"))
+    return (velocity, decrease, events, scraped_at)
+
+
+def verified_scraped_competitor_items(packet: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
+    """Return verified direct-competitor items from the Redshift ecommerce cache."""
+    payload = latest_ecommerce_snapshot_payload(category_slug_for_packet(packet))
+    rows = as_list(payload.get("rows"))
+    if not rows:
+        return []
+    require_approved_source = bool(load_approved_competitor_sources())
+    output: list[dict[str, Any]] = []
+    for raw_row in sorted(rows, key=ecommerce_cache_sort_key, reverse=True):
+        row = as_dict(raw_row)
+        domain = short_domain(row.get("domain") or row.get("url"))
+        if not normalize_text(row.get("url")) or "sunco" in short_domain(row.get("url")):
+            continue
+        if require_approved_source and not approved_competitor_source_for_domain(domain):
+            continue
+        output.append(ecommerce_cache_item_from_row(row))
+        if len(output) >= limit:
+            break
+    return output
+
+
+def verified_scraped_competitor_rows(packet: dict[str, Any], limit: int = 6) -> list[list[Any]]:
+    """Return verified direct-competitor rows from the Redshift ecommerce cache."""
+    return [
+        source_detail_row(item, "Redshift verified ecommerce scraper snapshot")
+        for item in verified_scraped_competitor_items(packet, limit=limit)
+    ]
+
+
+def ecommerce_snapshot_domains(packet: dict[str, Any]) -> set[str]:
+    """Return domains represented in the active category ecommerce snapshot."""
+    payload = latest_ecommerce_snapshot_payload(category_slug_for_packet(packet))
+    domains: set[str] = set()
+    for raw_row in as_list(payload.get("rows")):
+        row = as_dict(raw_row)
+        domain = short_domain(row.get("domain") or row.get("url"))
+        if domain:
+            domains.add(domain)
+    return domains
+
+
+def approved_source_snapshot_status(source: dict[str, Any], snapshot_domains: set[str]) -> str:
+    """Explain whether an approved source has current category product evidence."""
+    domain = source.get("domain")
+    if any(domain_matches(snapshot_domain, domain) for snapshot_domain in snapshot_domains):
+        return "Verified PDP rows in current category snapshot"
+    if decimal_from_value(source.get("latest_rows")) and decimal_from_value(source.get("latest_rows")) > 0:
+        return "Source exists in Redshift, but no matching PDP rows in current category snapshot"
+    return "Not currently covered by Redshift scrape views"
+
+
+def approved_source_warehouse_coverage(source: dict[str, Any]) -> str:
+    """Return compact warehouse coverage counts for the approved source."""
+    latest_rows = decimal_from_value(source.get("latest_rows")) or Decimal("0")
+    latest_urls = decimal_from_value(source.get("latest_urls")) or Decimal("0")
+    inventory_urls = decimal_from_value(source.get("inventory_urls")) or Decimal("0")
+    parts = [f"{display_number(latest_urls)} latest PDP URLs"] if latest_urls > 0 else ["0 latest PDP URLs"]
+    if inventory_urls > 0:
+        parts.append(f"{display_number(inventory_urls)} inventory URLs")
+    latest_scrape = normalize_text(source.get("latest_last_scraped"))
+    if latest_scrape:
+        parts.append(f"latest scrape {latest_scrape[:10]}")
+    if latest_rows <= 0 and normalize_text(source.get("tier")):
+        parts.append("approved source list only")
+    return "; ".join(parts)
+
+
+def approved_source_next_step(status: str) -> str:
+    """Return the safe next action for one approved source."""
+    lowered = status.lower()
+    if "current category snapshot" in lowered and "verified pdp" in lowered:
+        return "Use verified PDP rows above when product/spec match is visible."
+    if "source exists in redshift" in lowered:
+        return "Refresh/query ecommerce snapshot with broader category terms or site-specific terms."
+    return "Add source to scraper coverage or run manual site discovery before citing products."
+
+
+def approved_source_coverage_rows(packet: dict[str, Any], limit: int = 12) -> list[list[Any]]:
+    """Show approved competitor-source coverage for the active category."""
+    category_slug = category_slug_for_packet(packet)
+    identity = as_dict(packet.get("identity"))
+    snapshot_domains = ecommerce_snapshot_domains(packet)
+    sources = approved_sources_for_category(category_slug, limit=limit)
+    if not sources:
+        return [
+            [
+                "No approved source registry loaded",
+                "",
+                "",
+                "",
+                "Run approved_competitor_source_audit.py to create the backend source cache.",
+                "",
+                "",
+                "Do not treat missing Section C rows as proof that no competitors exist.",
+            ]
+        ]
+
+    rows: list[list[Any]] = []
+    for source in sources:
+        status = approved_source_snapshot_status(source, snapshot_domains)
+        search_link = source_link_cell(source_search_link(source, category_slug, identity.get("ideation_name")), "Search source")
+        rows.append(
+            [
+                source.get("competitor"),
+                source.get("domain"),
+                source.get("tier"),
+                source.get("product_subcategories_in_scope") or source.get("focus"),
+                status,
+                approved_source_warehouse_coverage(source),
+                search_link,
+                approved_source_next_step(status),
+            ]
+        )
     return rows
 
 
@@ -1995,15 +2676,21 @@ def inferred_competitor_rows(
     for item in sort_candidates(normalized_items):
         if verification_status(item) != "inferred_competitor":
             continue
+        why_included = (
+            product_url_issue(item.get("url"), resolved_source_channel(item))
+            or item.get("verification_reason")
+            or item.get("extraction_notes")
+            or item.get("match_notes")
+        )
         rows.append(
             [
                 item.get("brand"),
                 item.get("product_title"),
-                source_channel_label(item),
-                discovery_source_label(item),
+                directional_channel_label(item),
+                directional_supporting_source_label(item),
                 listing_link_cell(item),
                 link_status_for_item(item),
-                item.get("verification_reason") or item.get("extraction_notes") or item.get("match_notes"),
+                why_included,
                 item.get("match_confidence"),
             ]
         )
@@ -2144,30 +2831,70 @@ def channel_comparison_rows(performance: dict[str, Any]) -> list[list[Any]]:
 
 
 def spec_action_rows(spec_coverage: dict[str, Any]) -> list[list[Any]]:
-    """Format actionable feature/certification coverage rows."""
+    """Format feature/certification coverage in PM-facing language."""
+    def label_marker(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", normalize_text(value).lower()).strip()
+
+    def signal_read(entry: dict[str, Any]) -> str:
+        signal = normalize_text(entry.get("signal")).lower()
+        if signal == "whitespace":
+            return "Competitor-supported gap"
+        if signal == "table_stakes":
+            return "Common market requirement"
+        if signal in {"competitive", "leading"}:
+            return "Potential differentiator"
+        if signal in {"low_signal", "below_market"}:
+            return "Low-confidence signal"
+        return normalize_text(entry.get("signal")) or "Market signal"
+
+    def sunco_coverage_read(entry: dict[str, Any]) -> str:
+        coverage = entry.get("coverage_pct")
+        matched = entry.get("matched_count")
+        if coverage is None and matched is None:
+            return "Coverage not quantified"
+        return f"{display_value_for_label('Coverage %', coverage)} coverage; {display_value_for_label('Count', matched)} matched"
+
     rows = []
-    for entry in as_list(spec_coverage.get("feature_coverage")):
+    covered_labels = set()
+    for entry in as_list(spec_coverage.get("attribute_decisions")):
+        entry = as_dict(entry)
+        for label in as_list(entry.get("covered_labels")):
+            marker = label_marker(label)
+            if marker:
+                covered_labels.add(marker)
         rows.append(
             [
-                "Feature",
+                entry.get("attribute"),
+                entry.get("type"),
+                entry.get("market_evidence"),
+                entry.get("sunco_coverage"),
+                entry.get("recommendation"),
+                entry.get("source_notes"),
+            ]
+        )
+
+    for entry in as_list(spec_coverage.get("feature_coverage")):
+        if label_marker(entry.get("label")) in covered_labels:
+            continue
+        rows.append(
+            [
                 entry.get("label"),
-                entry.get("signal"),
-                entry.get("evidence_strength"),
-                entry.get("coverage_pct"),
-                entry.get("matched_count"),
+                "Feature",
+                signal_read(entry),
+                sunco_coverage_read(entry),
                 entry.get("recommended_action"),
+                entry.get("evidence_strength"),
             ]
         )
     for entry in as_list(spec_coverage.get("certification_coverage")):
         rows.append(
             [
-                "Certification",
                 entry.get("label"),
-                entry.get("signal"),
-                entry.get("evidence_strength"),
-                entry.get("coverage_pct"),
-                entry.get("matched_count"),
+                "Certification",
+                signal_read(entry),
+                sunco_coverage_read(entry),
                 entry.get("recommended_action"),
+                entry.get("evidence_strength"),
             ]
         )
     return rows
@@ -2390,80 +3117,73 @@ def render_row_sheet(
         ws,
         row,
         "PM Action Checklist",
-        ["Priority", "Issue", "Why It Matters", "Recommended Action", "Expected Impact"],
-        as_list(action_summary.get("actions")),
+        ["Recommendation Priority", "Issue / Reason", "Why It Matters", "Next Action", "Expected Impact"],
+        pm_action_checklist_rows(analysis, action_summary),
     )
     row = write_table(
         ws,
         row,
         "Demand Proof",
-        DECISION_EVIDENCE_HEADERS,
+        DEMAND_PROOF_HEADERS,
         demand_proof_rows(packet, analysis, normalized),
     )
     row = write_table(
         ws,
         row,
         "Sunco Coverage",
-        DECISION_EVIDENCE_HEADERS,
+        SUNCO_COVERAGE_HEADERS,
         sunco_coverage_decision_rows(packet, analysis, normalized),
     )
     row = write_table(
         ws,
         row,
-        "Competitor Comparables",
-        DECISION_EVIDENCE_HEADERS,
+        "Primary Competitor Comparables",
+        COMPETITOR_COMPARABLE_HEADERS,
         competitor_decision_rows(packet, analysis, normalized),
     )
     row = write_table(
         ws,
         row,
+        "Directional / Secondary Comparables",
+        COMPETITOR_COMPARABLE_HEADERS,
+        directional_competitor_rows(packet, analysis, normalized),
+    )
+    row = write_table(
+        ws,
+        row,
         "Pricing / Channel Read",
-        DECISION_EVIDENCE_HEADERS,
+        PRICING_CHANNEL_HEADERS,
         pricing_channel_decision_rows(packet, analysis, normalized),
     )
     row = write_table(
         ws,
         row,
-        "Risks and Watchouts",
-        DECISION_EVIDENCE_HEADERS,
+        "Go-Forward Watchouts",
+        WATCHOUT_HEADERS,
         risk_watchout_rows(packet, analysis, action_summary),
     )
-    row = section_header(ws, row, "Section A - Ideation + Reference Anchor Context")
+    row = section_header(ws, row, "Section A - Ideation + Current Sunco Context")
     row = key_value_rows(
         ws,
         row,
         [
             ("Concept Tracking Name", tracking_name),
             ("Opportunity Type", product_fit_classification(packet)),
-            ("Recommended Channel", channel_strategy(packet, analysis)),
+            ("Recommended Channel", channel_strategy_label(packet, analysis)),
             ("Category Owner", identity.get("category_owner")),
             ("Category", identity.get("category")),
             ("Subcategory", identity.get("subcategory")),
-            ("Strategy", identity.get("strategy")),
             ("Reference Anchor SKU", identity.get("sunco_reference_sku")),
-            ("Launch Outlook", performance.get("launch_outlook")),
-            ("Confidence", performance.get("confidence")),
-            ("Anchor Data Quality", reference_anchor.get("data_quality")),
-            ("Anchor Title", reference.get("title")),
-            ("Anchor Title Source", reference.get("title_source")),
+            ("Reference Anchor Product", reference.get("title")),
             ("Anchor Listing Price", reference.get("listing_price")),
-            ("Listing Price Source", reference.get("listing_price_source")),
-            ("Listing Price Note", reference.get("listing_price_note")),
             ("Anchor Shopify Revenue 12mo", reference.get("shopify_revenue_12mo")),
             ("Anchor Shopify Units 12mo", reference.get("shopify_units_12mo")),
-            ("Shopify Data Source", reference.get("shopify_data_source")),
             ("Anchor Amazon Revenue 12mo", reference.get("amazon_revenue_12mo")),
             ("Anchor Amazon Units 12mo", reference.get("amazon_units_12mo")),
-            ("Amazon Data Source", reference.get("amazon_data_source")),
-            ("Anchor Data Source", reference.get("reference_data_source")),
-            ("Anchor Sales Period", reference.get("sales_period_label")),
+            ("Anchor Role", reference_anchor.get("primary_use")),
+            ("Gap vs Ideation", product_difference_summary(packet, analysis)),
         ],
     )
-    row = merged_text_row(ws, row, "Reference Anchor Role", reference_anchor.get("primary_use"))
-    row = merged_text_row(ws, row, "Reference Anchor Secondary Use", reference_anchor.get("secondary_use"))
-    row = merged_text_row(ws, row, "Reference Anchor Caution", reference_anchor.get("caution"))
-    row = merged_text_row(ws, row, "Reference Anchor Guardrail", reference_anchor.get("do_not_overweight"))
-    row = merged_text_row(ws, row, "Reference Anchor Image URL", reference.get("image_url"))
     row = merged_text_row(
         ws,
         row,
@@ -2512,31 +3232,40 @@ def render_row_sheet(
     row = write_table(
         ws,
         row,
-        "Section B - Amazon Competitors (Verified Listings)",
-        ["Brand", "Product", "Identifier", "Channel", "Price", "Attributes", "Movement / Demand Signal", "Match Quality", "Source Link", "Link Status", "Source Basis"],
+        "Section B - Amazon Source Detail",
+        SOURCE_DETAIL_HEADERS,
         detailed_candidate_rows(as_list(normalized.get("items")), AMAZON_CHANNELS, limit=6, verification_filter="verified_listing"),
     )
 
+    verified_direct_rows = verified_scraped_competitor_rows(packet, limit=6)
     row = write_table(
         ws,
         row,
-        "Section C - Brick-and-Mortar / Direct Competitors (Verified Listings)",
-        ["Brand", "Product", "Identifier", "Channel", "Price", "Attributes", "Movement / Demand Signal", "Match Quality", "Source Link", "Link Status", "Source Basis"],
-        detailed_candidate_rows(as_list(normalized.get("items")), BM_DIRECT_CHANNELS, limit=6, verification_filter="verified_listing"),
+        "Section C - Direct / Retail Source Detail",
+        SOURCE_DETAIL_HEADERS,
+        verified_direct_rows
+        or detailed_candidate_rows(as_list(normalized.get("items")), BM_DIRECT_CHANNELS, limit=6, verification_filter="verified_listing"),
+    )
+    row = write_table(
+        ws,
+        row,
+        "Section C Source Coverage Audit",
+        APPROVED_SOURCE_COVERAGE_HEADERS,
+        approved_source_coverage_rows(packet, limit=12),
     )
 
     row = write_table(
         ws,
         row,
-        "Section D - Inferred Competitors / Directional Only",
-        ["Brand", "Product", "Likely Channel", "Supporting Source", "Source Link", "Link Status", "Why Inferred", "Confidence"],
+        "Section D - Directional Competitors - Not Verified",
+        ["Brand", "Product Name", "Discovery Channel", "Supporting Source", "Product Link", "Link Status", "Why Included", "Confidence"],
         inferred_competitor_rows(as_list(normalized.get("items")), limit=6),
     )
 
     row = write_table(
         ws,
         row,
-        "Section E - Pricing Position",
+        "Section E - Pricing Detail / Audit",
         ["Metric", "Value"],
         pricing_position_rows(pricing),
     )
@@ -2572,8 +3301,8 @@ def render_row_sheet(
     row = write_table(
         ws,
         row,
-        "Section F - Feature / Certification Signals",
-        ["Type", "Label", "Signal", "Evidence", "Coverage %", "Matched", "Recommendation"],
+        "Section F - Feature + Certification Evidence",
+        ["Attribute", "Type", "Market Evidence", "Sunco Coverage", "Recommendation", "Source / Notes"],
         spec_action_rows(spec_coverage),
     )
     row = write_table(
@@ -2641,7 +3370,7 @@ def render_row_sheet(
     row = write_list_section(ws, row, "Recommendations", as_list(analysis.get("recommendations")))
     row = write_list_section(ws, row, "Audit Notes", as_list(analysis.get("notes")))
 
-    row = section_header(ws, row, "Section G - PRD Generator Pre-Fill")
+    row = section_header(ws, row, "Section G - PRD / RFQ Draft Inputs")
     row = key_value_rows(ws, row, prd_prefill_pairs(packet, analysis))
 
 
@@ -2958,7 +3687,7 @@ def competitor_table_row(item: dict[str, Any], *, direct: bool = False) -> list[
         listing_identifier(item),
         item.get("brand"),
         item.get("price"),
-        item_demand_signal(item),
+        *item_demand_signal_parts(item),
         item.get("rating") or "",
         item.get("review_count") or "",
         listing_link_cell(item),
@@ -3181,7 +3910,7 @@ def render_slide_summary_sheet(
         ws,
         28,
         1,
-        ["ASIN / ID", "Brand", "Price", "Demand Signal", "Rating", "Reviews", "Source"],
+        ["ASIN / ID", "Brand", "Price", "Volume", "Rate / Share", "Window", "Rating", "Reviews", "Source"],
         [competitor_table_row(amazon_item)],
         header_fill=SLIDE_NAVY_FILL,
         max_rows=1,

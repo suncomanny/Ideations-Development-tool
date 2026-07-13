@@ -7,19 +7,19 @@ Looks up baseline context for a Reference SKU:
   - 12-month sales split by channel (Shopify vs Amazon, from Postgres via MCP)
 
 Usage:
-  python sku_lookup.py <sku>                     # Image + title from CSV only
+  python sku_lookup.py <sku>                     # Connector payload shell by default
   python sku_lookup.py <sku> --with-sales <json>  # Merge in Postgres sales data
 
 The Postgres queries are executed via MCP and passed in as --with-sales JSON.
-CSV files are legacy FY2025/offline fallback sources only and should not be
-treated as current sales data.
+CSV files are legacy/offline fallback sources only and should not be treated
+as current product, price, or sales data. They are disabled by default for
+Step 3 output.
 """
 
 import argparse
 import json
 import os
 import re
-import sys
 from datetime import date
 from functools import lru_cache
 
@@ -46,6 +46,23 @@ LEGACY_RESOURCE_FILENAMES = {
 LOCAL_SALES_PERIOD_LABEL = "Legacy FY2025 local export fallback"
 MIN_POSTGRES_PRICE_RATIO = 0.5
 MAX_POSTGRES_PRICE_RATIO = 2.5
+ALLOW_LEGACY_LOCAL_FALLBACKS_ENV = "PRD_RESEARCH_ALLOW_LEGACY_LOCAL_FALLBACKS"
+ALLOW_LOCAL_METADATA_CONTEXT_ENV = "PRD_RESEARCH_ALLOW_LOCAL_METADATA_CONTEXT"
+
+
+def env_flag(name: str) -> bool:
+    """Return True when an environment flag is explicitly enabled."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "y"}
+
+
+def legacy_local_fallbacks_enabled() -> bool:
+    """Legacy local sales/price fallback is opt-in only."""
+    return env_flag(ALLOW_LEGACY_LOCAL_FALLBACKS_ENV)
+
+
+def local_metadata_context_enabled() -> bool:
+    """Legacy local metadata context is opt-in only."""
+    return env_flag(ALLOW_LOCAL_METADATA_CONTEXT_ENV)
 
 
 def resolve_resource_path(filename: str) -> str:
@@ -154,8 +171,17 @@ def load_metadata() -> pd.DataFrame:
     """Load metadata CSV and add family + pack columns."""
     path = resolve_resource_path(METADATA_FILE)
     if not os.path.exists(path):
-        print(f"ERROR: Metadata file not found: {path}", file=sys.stderr)
-        sys.exit(1)
+        return pd.DataFrame(
+            columns=[
+                "Variant SKU",
+                "Image Src",
+                "Handle",
+                "Type",
+                "Variant Price",
+                "family",
+                "pack",
+            ]
+        )
 
     df = pd.read_csv(path, engine='python', on_bad_lines='skip')
     df['family'] = df['Variant SKU'].apply(
@@ -319,10 +345,29 @@ def apply_local_fallbacks(result: dict, row: pd.Series | None) -> dict:
     return result
 
 
-def lookup_from_csv(sku: str) -> dict:
-    """Look up image URL and title from metadata CSV."""
-    metadata_df = load_metadata()
+def lookup_from_csv(sku: str, allow_legacy_fallbacks: bool | None = None) -> dict:
+    """Build a reference shell and optionally attach legacy local context."""
+    allow_fallbacks = legacy_local_fallbacks_enabled() if allow_legacy_fallbacks is None else allow_legacy_fallbacks
     family = strip_pack_suffix(sku)
+    result = {
+        "sku": sku,
+        "family": family,
+        "found": False,
+        "image_url": None,
+        "title": None,
+        "product_type": None,
+        "handle": None,
+        "listing_price": None,
+        "shopify_revenue_12mo": None,
+        "shopify_units_12mo": None,
+        "amazon_revenue_12mo": None,
+        "amazon_units_12mo": None,
+    }
+
+    if not (local_metadata_context_enabled() or allow_fallbacks):
+        return result
+
+    metadata_df = load_metadata()
 
     # Try exact SKU match first, then family match (smallest pack)
     exact = metadata_df[metadata_df['Variant SKU'] == sku]
@@ -332,21 +377,9 @@ def lookup_from_csv(sku: str) -> dict:
         row = find_smallest_pack_sku(metadata_df, family)
 
     if row is None:
-        result = {
-            "sku": sku,
-            "family": family,
-            "found": False,
-            "image_url": None,
-            "title": None,
-            "product_type": None,
-            "handle": None,
-            "listing_price": None,
-            "shopify_revenue_12mo": None,
-            "shopify_units_12mo": None,
-            "amazon_revenue_12mo": None,
-            "amazon_units_12mo": None,
-        }
-        return apply_local_fallbacks(result, None)
+        if allow_fallbacks:
+            return apply_local_fallbacks(result, None)
+        return result
 
     # Extract image URL — use Image Src column
     image_url = row.get('Image Src')
@@ -368,11 +401,14 @@ def lookup_from_csv(sku: str) -> dict:
         "family": family,
         "found": True,
         "image_url": str(image_url) if image_url else None,
-        "title": None,  # Prefer Postgres title when available; local fallbacks fill this otherwise.
+        "title": None,  # Prefer Postgres title when available.
         "product_type": str(product_type) if product_type else None,
         "handle": str(handle) if handle else None,
     }
-    return apply_local_fallbacks(result, row)
+    if allow_fallbacks:
+        return apply_local_fallbacks(result, row)
+    result["reference_data_source"] = "local_metadata_image_only"
+    return result
 
 
 def merge_postgres_data(csv_result: dict, postgres_data: dict) -> dict:
@@ -569,7 +605,7 @@ def main():
                         help='Override MCP sales window end date (YYYY-MM-DD)')
     args = parser.parse_args()
 
-    # CSV lookup
+    # Connector payload shell by default. Legacy local context is opt-in via env vars.
     result = lookup_from_csv(args.sku)
 
     # Merge Postgres data if provided

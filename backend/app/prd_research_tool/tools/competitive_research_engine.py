@@ -826,6 +826,11 @@ def build_stackline_amazon_seeds(ideation: dict[str, Any]) -> list[dict[str, Any
         "top_competitor_products", []
     ):
         sku = product.get("retailer_sku")
+        generated_url = (
+            f"https://www.amazon.com/dp/{sku}"
+            if sku and re.fullmatch(r"[A-Z0-9]{10}", str(sku).upper())
+            else None
+        )
         seeds.append(
             compact_dict(
                 {
@@ -834,7 +839,7 @@ def build_stackline_amazon_seeds(ideation: dict[str, Any]) -> list[dict[str, Any
                     "sku": sku,
                     "model_number": product.get("model_number"),
                     "title": product.get("title"),
-                    "url": product.get("url") or (f"https://www.amazon.com/dp/{sku}" if sku else None),
+                    "url": product.get("url") or generated_url,
                     "avg_retail_price": product.get("avg_retail_price"),
                     "units_sold": product.get("units_sold"),
                     "sales_share_pct": product.get("sales_share_pct"),
@@ -855,6 +860,11 @@ def build_stackline_home_depot_seeds(ideation: dict[str, Any]) -> list[dict[str,
         "top_competitor_products", []
     ):
         sku = product.get("retailer_sku")
+        generated_url = (
+            f"https://www.homedepot.com/p/{sku}"
+            if sku and re.fullmatch(r"\d{6,}", str(sku))
+            else None
+        )
         seeds.append(
             compact_dict(
                 {
@@ -863,7 +873,7 @@ def build_stackline_home_depot_seeds(ideation: dict[str, Any]) -> list[dict[str,
                     "sku": sku,
                     "model_number": product.get("model_number"),
                     "title": product.get("title"),
-                    "url": product.get("url") or (f"https://www.homedepot.com/p/{sku}" if sku else None),
+                    "url": product.get("url") or generated_url,
                     "avg_retail_price": product.get("avg_retail_price"),
                     "units_sold": product.get("units_sold"),
                     "sales_share_pct": product.get("sales_share_pct"),
@@ -1405,7 +1415,6 @@ def build_research_packets(
     include_stackline_raw: bool = False,
     start_date: str | None = None,
     end_date: str | None = None,
-    stackline_folder: str | None = None,
     stackline_brand: str = "Sunco Lighting",
     sheet_name: str = "Ideations",
 ) -> dict[str, Any]:
@@ -1418,7 +1427,6 @@ def build_research_packets(
         include_stackline_raw=include_stackline_raw,
         start_date=start_date,
         end_date=end_date,
-        stackline_folder=stackline_folder,
         stackline_brand=stackline_brand,
         sheet_name=sheet_name,
     )
@@ -1479,11 +1487,6 @@ def main() -> None:
         help="Override MCP sales query end date (YYYY-MM-DD).",
     )
     parser.add_argument(
-        "--stackline-folder",
-        default=None,
-        help="Override the Stackline export folder.",
-    )
-    parser.add_argument(
         "--stackline-brand",
         default="Sunco Lighting",
         help="Brand name to treat as the internal brand focus in Stackline analysis.",
@@ -1505,7 +1508,6 @@ def main() -> None:
         include_stackline_raw=args.include_stackline_raw,
         start_date=args.start_date,
         end_date=args.end_date,
-        stackline_folder=args.stackline_folder,
         stackline_brand=args.stackline_brand,
         sheet_name=args.sheet,
     )

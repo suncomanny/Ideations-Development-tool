@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 import hashlib
-import csv
 import mimetypes
 import os
 import shutil
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,9 +18,14 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+BACKEND_APP = Path(__file__).resolve().parents[2] / "backend" / "app"
+if str(BACKEND_APP) not in sys.path:
+    sys.path.insert(0, str(BACKEND_APP))
+
 from ecommerce_evidence import ecommerce_rows_to_step1_rows, is_grow_light_candidate, load_or_refresh_ecommerce_snapshot
 from luminaire_performance import is_luminaire_category, normalize_luminaire_performance, performance_note
 from odbc_client import execute_odbc_sql, redshift_connection_source, redshift_connection_string, sanitize_connection_error
+from opportunity_engine.stackline_segments import STACKLINE_SEGMENT_OVERRIDES, sql_values, stackline_segments_for_category
 from product_demand_categories import choose_product_demand_category
 from sunco_catalog_coverage import catalog_coverage_analysis, load_catalog_context_from_cache_or_snapshot
 
@@ -54,62 +59,6 @@ IMAGE_CONTENT_TYPES = {
 }
 
 REDSHIFT_ODBC_CONNECTION = "DSN=Redshift"
-
-STACKLINE_SEGMENT_OVERRIDES = {
-    "emergency": ("Emergency Signs", "Emergency Lights - Core"),
-    "panels": ("Ceiling Panel Lights", "Flat Panel Ceiling Lights", "Flat Panels", "2x4 PANEL", "1x4 Flat Panel"),
-    "wraparounds": ("Wraparound LED - Broad V2", "Wraparound LED"),
-    "ufo": ("UFO High Bays", "UFO High Bay Overview", "UFO Lighting", "UFO"),
-    "linears": (
-        "Linear High Bays",
-        "Linear High Bay Overview",
-        "4ft Linear High Bay",
-        "Linear High Bay Selectable",
-        "Top 25 4ft Linear High Bay",
-        "4ft Linear High Bay Dual Selectable (200W/260W/320W)",
-        "Plug and Play Linear High Bay",
-    ),
-    "shop_light": ("SHOP LIGHT",),
-    "striplights": ("Striplights",),
-    "wall_packs": ("Wall Packs", "wall Packs", "White Wall Packs"),
-    "commercial_grow_lights": (
-        "2FT Backless Grow Light Fixture",
-        "2ft Backless Grow Fixtures",
-        "2x2 Bar Grow Light Fixture",
-        "2x2 Flat Panel Grow Light Fixture",
-        "2x4 Bar Grow Light Fixture",
-        "2x4 Flat Panel Grow Light Fixture",
-        "3x3 Bar Grow Light Fixture",
-        "3x3 Flat Panel Grow Light Fixture",
-        "4ft 45W V-Shape Reflector T8 Grow Fixture",
-        "4ft Grow Light with Timer & Selectable Spectrum",
-        "4x4 Bar Grow Light Fixture",
-        "4x4 Flat Panel Grow Light Fixture",
-        "5x5 Bar Grow Light Fixture",
-        "Bar Grow Light Fixture",
-        "Flat Panel Grow Light Fixture",
-        "Full Spectrum Strip T8 Grow Light",
-        "Full Spectrum V-Shaped Strip Grow Light",
-        "KA - Grow Lights",
-        "SHOP LIGHT - GROW LIGHTS",
-    ),
-    "residential_grow_lights": (
-        "4ft Grow Light with Timer & Selectable Spectrum",
-        "Full Spectrum Strip T8 Grow Light",
-        "Full Spectrum V-Shaped Strip Grow Light",
-        "Grow Light [Archived]",
-        "KA - Grow Lights",
-        "SHOP LIGHT - GROW LIGHTS",
-    ),
-    "slims": ("RECESSED - Slims",),
-    "recessed": ("CC Broad - Recessed Lighting", "RECESSED - ALL", "RECESSED - Retrofits", "RECESSED - Slims"),
-    "under_cabinet": ("Under Cabinet Light Fixture", "Under Cabinet Light Fixture - 24 inch"),
-    "ceiling_fixtures": ("Ceiling Fixtures",),
-    "chandeliers": ("Chandeliers",),
-    "vanity": ("Vanity",),
-    "bulbs_plus_tubes": ("A19 - Non-Smart / RGB", "DATA-A19-9W", "T8", "DATA-T8", "T8 Bulbs"),
-}
-
 
 def _existing_step1_imports():
     from opportunity_engine.category_intelligence import format_intelligence_audit
@@ -558,50 +507,13 @@ def _as_float(value: Any) -> float:
         return 0.0
 
 
-def _slugish(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
-
-
-def _local_stackline_files(paths: Any, category_slug: str, category_name: str) -> list[Path]:
-    category_terms = {_slugish(category_slug.replace("_", " ")), _slugish(category_name)}
-    folders = [
-        paths.root / "product_demand_ideation" / "source_data" / "Stackline Data",
-        paths.source_data / "Stackline Data",
-    ]
-    matches: list[Path] = []
-    for folder in folders:
-        if not folder.exists():
-            continue
-        folder_matches = sorted(
-            path
-            for path in folder.glob("*.csv")
-            if any(term and term in _slugish(path.stem) for term in category_terms)
-            and ("summary" in path.stem.lower() or "_amz_" in path.stem.lower() or "amazon" in path.stem.lower())
-        )
-        if folder_matches:
-            return folder_matches
-    return matches
-
-
-def _stackline_segments_for_category(category_slug: str, category_name: str) -> tuple[str, ...]:
-    override = STACKLINE_SEGMENT_OVERRIDES.get(category_slug)
-    if override:
-        return override
-    terms = [term for term in _slugish(f"{category_slug} {category_name}").split() if len(term) >= 4]
-    return tuple(dict.fromkeys(terms))
-
-
-def _sql_values(values: tuple[str, ...]) -> str:
-    return ", ".join("'" + value.replace("'", "''") + "'" for value in values)
-
-
 def build_stackline_redshift_sql(category_slug: str, category_name: str, limit: int = 25) -> str:
-    segments = _stackline_segments_for_category(category_slug, category_name)
+    segments = stackline_segments_for_category(category_slug, category_name)
     if not segments:
         return ""
     exact_segments = STACKLINE_SEGMENT_OVERRIDES.get(category_slug)
     if exact_segments:
-        segment_filter = f"cs.segment_name in ({_sql_values(exact_segments)})"
+        segment_filter = f"cs.segment_name in ({sql_values(exact_segments)})"
     else:
         segment_filter = " or ".join(
             "lower(cs.segment_name) like '%" + term.replace("'", "''") + "%'"
@@ -763,75 +675,6 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
     return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit, category_slug=category_slug), sql
 
 
-def _stackline_amazon_rows_from_csv(paths: Any, category_slug: str, category_name: str, limit: int = 10) -> list[dict[str, Any]]:
-    files = _local_stackline_files(paths, category_slug, category_name)
-    groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
-    source_names: set[str] = set()
-    for path in files:
-        with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                if "amazon" not in _text(row.get("Retailer Name")).lower():
-                    continue
-                asin = _text(row.get("Retailer SKU"))
-                title = _text(row.get("Title"))
-                if not asin or not title:
-                    continue
-                key = (
-                    asin,
-                    _text(row.get("Model Number")),
-                    title,
-                    _text(row.get("Brand")),
-                    _text(row.get("Segment Name")),
-                )
-                item = groups.setdefault(
-                    key,
-                    {
-                        "asin": asin,
-                        "model": _text(row.get("Model Number")),
-                        "title": title,
-                        "brand": _text(row.get("Brand")),
-                        "segment": _text(row.get("Segment Name")),
-                        "retail_sales": 0.0,
-                        "units_sold": 0.0,
-                        "price_total": 0.0,
-                        "price_count": 0,
-                        "weeks": set(),
-                        "latest_week": "",
-                        "source_names": set(),
-                    },
-                )
-                item["source_names"].add(path.name)
-                item["retail_sales"] += _as_float(row.get("Retail Sales"))
-                item["units_sold"] += _as_float(row.get("Units Sold"))
-                price = _as_float(row.get("Retail Price"))
-                if price:
-                    item["price_total"] += price
-                    item["price_count"] += 1
-                week = _text(row.get("Week ID"))
-                if week:
-                    item["weeks"].add(week)
-                item["latest_week"] = max(_text(item.get("latest_week")), _text(row.get("Week Ending")))
-    ranked = sorted(groups.values(), key=lambda item: (item["retail_sales"], item["units_sold"]), reverse=True)
-    normalized = [
-        {
-            "segment_name": item["segment"],
-            "retailer_sku": item["asin"],
-            "model_number": item["model"],
-            "title": item["title"],
-            "brand_name": item["brand"],
-            "retail_sales": item["retail_sales"],
-            "units_sold": item["units_sold"],
-            "avg_retail_price": item["price_total"] / item["price_count"] if item["price_count"] else 0.0,
-            "weeks": len(item["weeks"]),
-            "min_week_id": "",
-            "max_week_id": "",
-        }
-        for item in ranked
-    ]
-    return _stackline_items_to_amazon_rows(normalized, "Local Stackline Amazon summary", limit=limit, category_slug=category_slug)
-
-
 def _amazon_row_identity(row: dict[str, Any]) -> str:
     for key in ("review_url", "example", "recommendation"):
         value = _text(row.get(key)).strip().lower()
@@ -976,21 +819,10 @@ def _apply_product_demand_overlay(
     else:
         output["product_demand_stackline_audit"] = redshift_stackline_audit
         output["product_demand_stackline_note"] = redshift_stackline_audit
-        allow_local_stackline_fallback = os.environ.get("PRODUCT_DEMAND_ALLOW_LOCAL_STACKLINE_CSV_FALLBACK", "").strip() == "1"
-        if allow_local_stackline_fallback and not inherited_amazon_rows:
-            local_stackline_rows = _stackline_amazon_rows_from_csv(paths, category_slug, category_name)
-            if local_stackline_rows:
-                output["amazon_rows"] = local_stackline_rows
-                output["product_demand_stackline_source"] = "local_stackline_summary_csv_fallback"
-                output["product_demand_stackline_note"] = (
-                    "Live Redshift Stackline Atlas returned no rows, so 1B used the local CSV fallback. "
-                    "This should be treated as a diagnostic path only."
-                )
-        elif not inherited_amazon_rows:
+        if not inherited_amazon_rows:
             output["product_demand_stackline_note"] = _append_note(
                 redshift_stackline_audit,
-                "No local CSV Stackline fallback was used. Normal Step 1B runs require Redshift/ODBC Stackline data "
-                "so PMs do not depend on manual Stackline uploads.",
+                "Step 1B requires Redshift/ODBC Stackline data.",
             )
     _apply_catalog_coverage_to_amazon_rows(output.get("amazon_rows", []), catalog_rows, category_slug)
     max_inventory_decrease = max((float(row.get("observed_stock_decrease") or 0) for row in inventory_rows), default=0.0)

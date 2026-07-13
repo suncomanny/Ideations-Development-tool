@@ -11,6 +11,7 @@ from typing import Any
 from .categories import Category
 from .ideation_template import latest_gap_workbook
 from .paths import ProjectPaths
+from .refresh_redshift_stackline_cache import ensure_stackline_cache_for_category
 from .utils import newest_file, timestamp
 
 
@@ -419,6 +420,7 @@ def prepare_research_session(paths: ProjectPaths, category: Category, workbook: 
     if selected is None:
         raise FileNotFoundError(f"No Step 2 PRD ideation workbook found for {category.run_name}. Run Step 2 first.")
 
+    stackline_preflight = ensure_stackline_cache_for_category(paths, category)
     session_name = f"{category.slug}_{timestamp()}"
     args = [
         "prepare",
@@ -427,13 +429,11 @@ def prepare_research_session(paths: ProjectPaths, category: Category, workbook: 
         session_name,
         "--output-root",
         str(paths.research_sessions),
-        "--stackline-folder",
-        str(paths.source_data / "Stackline Data"),
-        "--apply-local-family-fallback",
         "--limit",
         "10",
     ]
     result = run_orchestrator(paths, args, f"research_prepare_{session_name}.log")
+    result["stackline_preflight"] = stackline_preflight
     session_root_value = (result.get("init") or {}).get("session_root")
     if session_root_value:
         session_root = Path(session_root_value)
