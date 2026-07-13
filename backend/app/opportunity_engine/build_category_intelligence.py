@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sqlite3
 from collections import Counter, defaultdict
@@ -74,6 +75,8 @@ PROFILE_SIGNAL_FIELDS = {
     "material_keywords",
     "mounting_keywords",
 }
+
+INCLUDE_LEGACY_GAP_EVIDENCE_ENV = "OPPORTUNITY_ENGINE_INCLUDE_LEGACY_GAP_EVIDENCE"
 
 
 def utc_now() -> str:
@@ -228,6 +231,29 @@ def insert_gap_manifests(
     lookup: dict[str, dict[str, Any]],
     category_ids: dict[str, int],
 ) -> tuple[int, dict[str, int], list[str]]:
+    if os.environ.get(INCLUDE_LEGACY_GAP_EVIDENCE_ENV, "").strip().lower() not in {"1", "true", "yes", "y"}:
+        warning = (
+            "Legacy schema-reference gap manifests were skipped. "
+            f"Set {INCLUDE_LEGACY_GAP_EVIDENCE_ENV}=1 only for archival comparison rebuilds."
+        )
+        now = utc_now()
+        connection.execute(
+            """
+            INSERT INTO refresh_audit(source, run_date, data_age_days, sql_used, row_counts_json, warnings_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy_schema_reference_gap_manifests",
+                date.today().isoformat(),
+                None,
+                "Skipped by default so stale local schema-reference manifests cannot become active recommendation evidence.",
+                json_text({}),
+                json_text([warning]),
+                now,
+            ),
+        )
+        return 0, {}, [warning]
+
     manifests = [
         ("Sunco.com/ecommerce", paths.source_data / "schema_references" / "source_manifest_indoor_residential_2026-05-13.json"),
         ("Amazon", paths.source_data / "schema_references" / "amazon_rerun_evidence_indoor_residential_2026-05-13.json"),

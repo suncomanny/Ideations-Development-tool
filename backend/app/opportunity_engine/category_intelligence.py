@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from .paths import ProjectPaths
 
 
 DATABASE_RELATIVE_PATH = Path("source_data") / "category_intelligence" / "sunco_category_intelligence.sqlite"
+INCLUDE_LEGACY_GAP_EVIDENCE_ENV = "OPPORTUNITY_ENGINE_INCLUDE_LEGACY_GAP_EVIDENCE"
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,10 @@ def _json_loads(value: Any, default: Any) -> Any:
 
 def _rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
     return [dict(row) for row in cursor.fetchall()]
+
+
+def include_legacy_gap_evidence() -> bool:
+    return os.environ.get(INCLUDE_LEGACY_GAP_EVIDENCE_ENV, "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def category_summary(paths: ProjectPaths, category: Category) -> dict[str, Any]:
@@ -114,7 +120,7 @@ def load_category_intelligence(paths: ProjectPaths, category: Category) -> Categ
                     ORDER BY profile_id
                     """
                 )
-            )
+        )
         evidence = _rows(
             connection.execute(
                 """
@@ -131,6 +137,12 @@ def load_category_intelligence(paths: ProjectPaths, category: Category) -> Categ
                 (category_id,),
             )
         )
+        if not include_legacy_gap_evidence():
+            evidence = [
+                row
+                for row in evidence
+                if "schema_references" not in str(row.get("source_reference") or "").replace("\\", "/").lower()
+            ]
         decoder_codes = _rows(
             connection.execute(
                 """

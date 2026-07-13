@@ -76,15 +76,15 @@ def run_step1(root: Path | str) -> None:
     paths = ProjectPaths.from_root(root)
     paths.ensure()
     category = choose_category(paths)
-    force_refresh = prompt_yes_no("Force refresh even if cached data is under 30 days old?", default=False)
+    force_refresh = prompt_yes_no("Force refresh even if active backend source data is under 30 days old?", default=False)
     data = load_category_data(paths, category)
     age = data.get("age_days")
     if age is None:
-        print("\nNo dated cached data was found. A refresh should be run before final decision-making.")
+        print("\nNo dated active backend source data was found. Run Step 0 before final decision-making.")
     elif age > 30:
-        print(f"\nCached data is {age} days old. A fresh collection should run; this script will still create a new timestamped workbook.")
+        print(f"\nActive backend source data is {age} days old. Run Step 0; this script will still create a new timestamped workbook.")
     elif force_refresh:
-        print(f"\nCached data is {age} days old. Force refresh was requested; this run will document that in the audit sheet.")
+        print(f"\nActive backend source data is {age} days old. Force refresh was requested; this run will document that in the audit sheet.")
     output, issues = generate_gap_workbook(paths, category, force_refresh=force_refresh)
     print(f"\nStep 1 output:\n{output}")
     _print_issues(issues)
@@ -175,7 +175,7 @@ def run_step3(root: Path | str) -> None:
         autofill = result.get("stackline_autofill") or {}
         if autofill.get("prefilled_artifact_count"):
             print(
-                "\nLocal Stackline autofill completed "
+                "\nRedshift-backed Stackline autofill completed "
                 f"{autofill.get('prefilled_artifact_count')} Amazon/Home Depot raw artifact(s)."
             )
         print(f"Log:\n{result.get('_log_path')}")

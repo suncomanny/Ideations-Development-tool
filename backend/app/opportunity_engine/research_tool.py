@@ -233,7 +233,7 @@ def _stackline_raw_item(seed: dict[str, Any], channel: str, row_number: int, ind
         "availability": None,
         "match_confidence": 0.85,
         "match_notes": "Autofilled from Stackline segment leader data. Use web enrichment only for missing specs, certifications, and listing-copy details.",
-        "extraction_notes": "Local Stackline autofill; no live product page was fetched for this item.",
+        "extraction_notes": "Redshift-backed Stackline autofill; no live product page was fetched for this item.",
         "raw_observations": [
             f"Stackline units_sold={seed.get('units_sold')}",
             f"Stackline sales_share_pct={seed.get('sales_share_pct')}",

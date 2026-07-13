@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -38,9 +39,42 @@ CATALOG_COLUMNS = [
     "voltage",
 ]
 
+CATALOG_SNAPSHOT_MAX_AGE_HOURS_ENV = "PRODUCT_DEMAND_CATALOG_SNAPSHOT_MAX_AGE_HOURS"
+ALLOW_STALE_CATALOG_ENV = "PRODUCT_DEMAND_ALLOW_STALE_CATALOG_CACHE"
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _generated_age_hours(generated_at: Any) -> float | None:
+    if not generated_at:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - timestamp).total_seconds() / 3600
+
+
+def _max_catalog_age_hours() -> float:
+    return float(os.environ.get(CATALOG_SNAPSHOT_MAX_AGE_HOURS_ENV) or 24)
+
+
+def _catalog_payload_is_stale(payload: dict[str, Any]) -> bool:
+    if _env_flag("PRODUCT_DEMAND_FORCE_CATALOG_REFRESH"):
+        return True
+    source = str(payload.get("source_system") or "").lower()
+    if not source.startswith("postgres_mcp"):
+        return True
+    age_hours = _generated_age_hours(payload.get("generated_at"))
+    return age_hours is None or age_hours > _max_catalog_age_hours()
 
 
 def _text(value: Any) -> str:
@@ -178,9 +212,10 @@ def refresh_catalog_snapshot_via_mcp(exports_dir: Path, category_slug: str, time
 
 def load_or_refresh_catalog_snapshot(exports_dir: Path, category_slug: str) -> tuple[dict[str, Any], Path]:
     path = latest_catalog_snapshot(exports_dir, category_slug)
-    if path is None:
+    payload = json.loads(path.read_text(encoding="utf-8")) if path else {}
+    if path is None or _catalog_payload_is_stale(payload):
         path = refresh_catalog_snapshot_via_mcp(exports_dir, category_slug)
-    payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     return payload, path
 
 
@@ -256,6 +291,14 @@ def _cache_metadata(cache_path: Path) -> dict[str, str]:
         connection.close()
 
 
+def _catalog_cache_is_stale(cache_path: Path) -> bool:
+    try:
+        metadata = _cache_metadata(cache_path)
+    except Exception:
+        return True
+    return _catalog_payload_is_stale(metadata)
+
+
 def _profile_text(row: dict[str, Any]) -> str:
     return " ".join(
         _text(row.get(key))
@@ -307,10 +350,26 @@ def load_all_catalog_rows_from_cache(cache_path: Path) -> list[dict[str, Any]]:
 
 def load_catalog_context_from_cache_or_snapshot(root: Path, category_slug: str) -> tuple[list[dict[str, Any]], Path | None, str]:
     cache_path = catalog_cache_path(root)
-    if not cache_path.exists():
+    cache_missing = not cache_path.exists()
+    cache_stale = False if cache_missing else _catalog_cache_is_stale(cache_path)
+    if cache_missing or cache_stale:
         try:
             refresh_catalog_cache_via_mcp(cache_path)
         except Exception:
+            if cache_path.exists() and _env_flag(ALLOW_STALE_CATALOG_ENV):
+                pass
+            elif cache_path.exists() and cache_stale:
+                raise
+            else:
+                exports = root / "product_demand_ideation" / "experiments" / category_slug / "exports"
+                snapshot, snapshot_path = load_or_refresh_catalog_snapshot(exports, category_slug)
+                rows, classification_path, classification_source = enrich_catalog_rows_with_classification(root, list(snapshot.get("rows") or []))
+                source = str(snapshot.get("source_system") or "unknown")
+                if classification_source:
+                    source = f"{source}; SKU classification source: {classification_source}"
+                    return rows, classification_path or snapshot_path, source
+                return rows, snapshot_path, source
+        if not cache_path.exists():
             exports = root / "product_demand_ideation" / "experiments" / category_slug / "exports"
             snapshot, snapshot_path = load_or_refresh_catalog_snapshot(exports, category_slug)
             rows, classification_path, classification_source = enrich_catalog_rows_with_classification(root, list(snapshot.get("rows") or []))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import hashlib
+import json
 import mimetypes
 import os
 import shutil
@@ -13,6 +14,7 @@ from html import unescape
 from collections import defaultdict
 from io import BytesIO
 from copy import deepcopy
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +76,10 @@ def _existing_step1_imports():
         _write_source_audit,
         _write_source_rows,
         _write_summary,
+        apply_freshness_rows,
+        build_step1_freshness_rows,
         load_category_data,
+        summarize_freshness_rows,
     )
     from opportunity_engine.line_review import (
         prepare_line_review_context,
@@ -100,7 +105,10 @@ def _existing_step1_imports():
         "_write_source_audit": _write_source_audit,
         "_write_source_rows": _write_source_rows,
         "_write_summary": _write_summary,
+        "apply_freshness_rows": apply_freshness_rows,
+        "build_step1_freshness_rows": build_step1_freshness_rows,
         "load_category_data": load_category_data,
+        "summarize_freshness_rows": summarize_freshness_rows,
         "line_review_run_audit_rows": run_audit_rows,
         "prepare_line_review_context": prepare_line_review_context,
         "write_line_review_sheet": write_line_review_sheet,
@@ -118,6 +126,114 @@ def _text(value: Any) -> str:
     text = unescape(str(value or ""))
     text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _date_from_text(value: Any) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _date_from_path(path: Path | None) -> date | None:
+    if not path or not path.exists():
+        return None
+    if path.suffix.lower() == ".json":
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            for key in ["generated_at", "generated", "created_at"]:
+                generated = _date_from_text(payload.get(key))
+                if generated:
+                    return generated
+        except Exception:
+            pass
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).date()
+    except OSError:
+        return None
+
+
+def _age_days(generated: date | None) -> int | None:
+    return (date.today() - generated).days if generated else None
+
+
+def _freshness_record(
+    source: str,
+    path: Path | None,
+    source_system: str,
+    role: str,
+    active: bool = True,
+    note: str = "",
+    generated: date | None = None,
+) -> dict[str, Any]:
+    resolved_generated = generated or _date_from_path(path)
+    return {
+        "source": source,
+        "source_system": source_system,
+        "role": role,
+        "path": str(path) if path else "",
+        "generated": resolved_generated.isoformat() if resolved_generated else "Unknown",
+        "age_days": _age_days(resolved_generated),
+        "active": active,
+        "note": note,
+    }
+
+
+def _attach_product_demand_freshness(
+    *,
+    existing: dict[str, Any],
+    paths: Any,
+    category: Any,
+    data: dict[str, Any],
+    inventory_snapshot_path: Path | None,
+    inventory_source: str,
+    catalog_snapshot_path: Path | None,
+    catalog_source: str,
+    stackline_live: bool,
+) -> None:
+    rows = existing["build_step1_freshness_rows"](
+        paths=paths,
+        category=category,
+        generated=data.get("generated"),
+        source_path=Path(data["source_path"]) if data.get("source_path") else None,
+        amazon_rerun_path=Path(data["amazon_rerun_path"]) if data.get("amazon_rerun_path") else None,
+        amazon_path=Path(data["amazon_path"]) if data.get("amazon_path") else None,
+        include_legacy_active=False,
+    )
+    rows.append(
+        _freshness_record(
+            "Redshift ecommerce competitor snapshot",
+            inventory_snapshot_path,
+            inventory_source,
+            "Main Recommendations demand and inventory movement",
+            active=bool(inventory_snapshot_path),
+            note="Loaded or refreshed by Product Demand Step 1B.",
+        )
+    )
+    rows.append(
+        _freshness_record(
+            "Sunco catalog coverage snapshot/cache",
+            catalog_snapshot_path,
+            catalog_source,
+            "Existing Sunco catalog coverage check",
+            active=bool(catalog_snapshot_path),
+            note="Loaded or refreshed by Product Demand Step 1B.",
+        )
+    )
+    rows.append(
+        _freshness_record(
+            "Live Redshift Stackline Step 1B query",
+            None,
+            data.get("product_demand_stackline_source") or "redshift_stackline",
+            "Amazon recommendation demand",
+            active=stackline_live,
+            note=data.get("product_demand_stackline_note") or "",
+            generated=date.today() if stackline_live else None,
+        )
+    )
+    existing["apply_freshness_rows"](data, rows)
 
 
 FEATURE_DISPLAY_NAMES = {
@@ -675,28 +791,6 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
     return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit, category_slug=category_slug), sql
 
 
-def _amazon_row_identity(row: dict[str, Any]) -> str:
-    for key in ("review_url", "example", "recommendation"):
-        value = _text(row.get(key)).strip().lower()
-        if value:
-            return value
-    return hashlib.sha1(str(sorted(row.items())).encode("utf-8", errors="ignore")).hexdigest()
-
-
-def _merge_amazon_rows(primary_rows: list[dict[str, Any]], inherited_rows: list[dict[str, Any]], limit: int = 16) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in [*primary_rows, *inherited_rows]:
-        identity = _amazon_row_identity(row)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        merged.append(row)
-        if len(merged) >= limit:
-            break
-    return merged
-
-
 def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_rows: list[dict[str, Any]], category_slug: str) -> None:
     generic_checks = (
         "Needs Sunco Amazon exact-design and pack-size coverage check before treating as a launch gap.",
@@ -806,24 +900,35 @@ def _apply_product_demand_overlay(
         output["source_exact_count"] = len(ecommerce_source_rows)
         output["source_from_amazon_count"] = 0
         output["source_supplemental_count"] = 0
-    inherited_amazon_rows = list(output.get("amazon_rows") or [])
+    else:
+        output["source_rows"] = []
+        output["source_exact_count"] = 0
+        output["source_from_amazon_count"] = 0
+        output["source_supplemental_count"] = 0
+        output["source_supplemental_warnings"] = [
+            "No Redshift ecommerce competitor rows were available for this category. Product Demand Step 1B did not use legacy local recommendation seeds."
+        ]
     redshift_stackline_rows, redshift_stackline_audit = _stackline_amazon_rows_from_redshift(category_slug, category_name)
     if redshift_stackline_rows:
-        output["amazon_rows"] = _merge_amazon_rows(redshift_stackline_rows, inherited_amazon_rows)
+        output["amazon_rows"] = redshift_stackline_rows
+        output["amazon_exact_count"] = len(redshift_stackline_rows)
+        output["amazon_supplemental_count"] = 0
         output["product_demand_stackline_source"] = "redshift_odbc_stackline_atlas"
         output["product_demand_stackline_audit"] = redshift_stackline_audit
         output["product_demand_stackline_note"] = (
             f"Live Redshift Stackline Atlas returned {len(redshift_stackline_rows)} Amazon rows. "
-            f"{len(inherited_amazon_rows)} inherited Step 1 Amazon rows were retained only when unique."
+            "Legacy local Step 1 Amazon rows were excluded from Product Demand Step 1B."
         )
     else:
+        output["amazon_rows"] = []
+        output["amazon_exact_count"] = 0
+        output["amazon_supplemental_count"] = 0
         output["product_demand_stackline_audit"] = redshift_stackline_audit
         output["product_demand_stackline_note"] = redshift_stackline_audit
-        if not inherited_amazon_rows:
-            output["product_demand_stackline_note"] = _append_note(
-                redshift_stackline_audit,
-                "Step 1B requires Redshift/ODBC Stackline data.",
-            )
+        output["product_demand_stackline_note"] = _append_note(
+            redshift_stackline_audit,
+            "Step 1B requires Redshift/ODBC Stackline data and did not use legacy local Amazon recommendation seeds.",
+        )
     _apply_catalog_coverage_to_amazon_rows(output.get("amazon_rows", []), catalog_rows, category_slug)
     max_inventory_decrease = max((float(row.get("observed_stock_decrease") or 0) for row in inventory_rows), default=0.0)
     max_inventory_velocity = max(
@@ -918,6 +1023,17 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
             )
         line_review_context = existing["prepare_line_review_context"](paths, category)
         data["line_review_context"] = line_review_context
+        _attach_product_demand_freshness(
+            existing=existing,
+            paths=paths,
+            category=category,
+            data=data,
+            inventory_snapshot_path=inventory_snapshot_path,
+            inventory_source=inventory_source,
+            catalog_snapshot_path=catalog_snapshot_path,
+            catalog_source=catalog_source,
+            stackline_live=data.get("product_demand_stackline_source") == "redshift_odbc_stackline_atlas",
+        )
         template = existing["_template_path"](paths)
         run_stamp = existing["timestamp"]()
         output_folder = root / "product_demand_ideation" / "experiments" / category.slug / "outputs"
@@ -956,6 +1072,8 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
             ("Amazon / Stackline note", data.get("product_demand_stackline_note") or "No live Redshift Stackline replacement was applied."),
             ("Sunco catalog source", catalog_source),
             ("Sunco catalog snapshot", str(catalog_snapshot_path) if catalog_snapshot_path else "No Sunco catalog coverage snapshot for this category."),
+            ("Active source age days", "Unknown" if data.get("age_days") is None else str(data.get("age_days"))),
+            ("Source freshness detail", data.get("freshness_summary") or "No source freshness records were available."),
             ("Main Recommendations source rule", "If Redshift ecommerce PDP rows exist for the selected category, they lead the main Recommendations tab. Amazon-derived display rows are kept out of the Shopify/front-end tab."),
             ("Inventory role", "Inventory movement is a Shopify/ecommerce demand proxy for the main tab and a supporting signal only for the Amazon tab."),
             ("Product Demand overlay rows", overlay_summary or "No overlay rows."),

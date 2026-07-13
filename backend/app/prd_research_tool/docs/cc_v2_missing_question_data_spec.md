@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `skubana_order` + `skubana_orderitem` | yes - `order_date`, `sales_channel_id`, `customer_id`, `listing_sku`, `sales_price`, `quantity_ordered` | n/a | n/a |
 | `brand_analytics_keywords` | no | n/a | Amazon Brand Analytics exports |
-| `gold_sales` / `gold_traffic` | no | yes - local Stackline CSV bundles | n/a |
+| `gold_sales` / `gold_traffic` | no | no - use Redshift Stackline cache/query outputs | n/a |
 
 ## Q2 Demand Consistency
 

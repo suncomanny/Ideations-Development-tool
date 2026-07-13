@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
+import os
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from .line_review import (
     write_line_review_sheet,
 )
 from .paths import ProjectPaths
+from .refresh_redshift_stackline_cache import cache_created_date, latest_category_cache
 from .sql_audit import collect_sql_text
 from .utils import slugify, timestamp
 from .validation import try_excel_com_open_save, validate_workbook
@@ -107,6 +109,8 @@ SUCCESS_PROXY_TEXT = (
     "assortment gap, and a concrete PM action path. Ideas with weaker category fit are labeled as supplemental and "
     "remain exploratory until refreshed evidence supports them."
 )
+
+INCLUDE_LEGACY_GAP_EVIDENCE_ENV = "OPPORTUNITY_ENGINE_INCLUDE_LEGACY_GAP_EVIDENCE"
 
 
 @contextmanager
@@ -393,12 +397,201 @@ def _reference_manifest_paths(paths: ProjectPaths) -> tuple[Path, Path, Path]:
     )
 
 
+def _date_from_text(value: Any) -> date | None:
+    if not value:
+        return None
+    text = str(value)[:10]
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _date_from_json_or_mtime(path: Path, keys: tuple[str, ...] = ("generated_at", "generated", "created_at")) -> date | None:
+    if not path or not path.exists():
+        return None
+    try:
+        payload = load_json(path)
+        for key in keys:
+            generated = _date_from_text(payload.get(key))
+            if generated:
+                return generated
+    except Exception:
+        pass
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).date()
+    except OSError:
+        return None
+
+
+def _latest_category_file(paths: ProjectPaths, category: Category, folder: Path, patterns: list[str]) -> Path | None:
+    if not folder.exists():
+        return None
+    candidates: list[Path] = []
+    for pattern in patterns:
+        candidates.extend(folder.glob(pattern))
+    matches = sorted(
+        {path.resolve(): path for path in candidates if path.is_file()}.values(),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return matches[0] if matches else None
+
+
+def _freshness_record(
+    source: str,
+    path: Path | None,
+    generated: date | None,
+    source_system: str,
+    role: str,
+    active: bool = True,
+    note: str = "",
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "source_system": source_system,
+        "role": role,
+        "path": str(path) if path else "",
+        "generated": generated.isoformat() if generated else "Unknown",
+        "age_days": age_days(generated),
+        "active": active,
+        "note": note,
+    }
+
+
+def _latest_line_review_snapshot(paths: ProjectPaths, category: Category) -> Path | None:
+    return _latest_category_file(
+        paths,
+        category,
+        paths.source_data / "postgres_exports" / "line_reviews",
+        [
+            f"{category.slug}_line_review*.json",
+            f"{category.slug}*line_review*.json",
+            f"*{category.slug}*line_review*.json",
+        ],
+    ) or _latest_category_file(
+        paths,
+        category,
+        paths.source_data / "redshift_exports" / "line_reviews",
+        [
+            f"{category.slug}_line_review*.json",
+            f"{category.slug}*line_review*.json",
+            f"*{category.slug}*line_review*.json",
+        ],
+    )
+
+
+def build_step1_freshness_rows(
+    paths: ProjectPaths,
+    category: Category,
+    generated: date | None,
+    source_path: Path | None = None,
+    amazon_rerun_path: Path | None = None,
+    amazon_path: Path | None = None,
+    include_legacy_active: bool = True,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if source_path:
+        rows.append(
+            _freshness_record(
+                "Legacy ecommerce recommendation seed",
+                source_path,
+                generated or _date_from_json_or_mtime(source_path),
+                "schema_reference_json",
+                "Step 1 seed/reference",
+                active=include_legacy_active,
+                note="Older seed manifest. Product Demand Step 1B should prefer refreshed Redshift/Postgres-backed sources when available.",
+            )
+        )
+    if amazon_rerun_path:
+        rows.append(
+            _freshness_record(
+                "Legacy Amazon rerun seed",
+                amazon_rerun_path,
+                _date_from_json_or_mtime(amazon_rerun_path) or generated,
+                "schema_reference_json",
+                "Amazon seed/reference",
+                active=include_legacy_active,
+                note="Older seed manifest. Kept for backward compatibility and audit context.",
+            )
+        )
+    if amazon_path:
+        rows.append(
+            _freshness_record(
+                "Legacy Amazon recommendation manifest",
+                amazon_path,
+                _date_from_json_or_mtime(amazon_path) or generated,
+                "schema_reference_json",
+                "Amazon fallback seed/reference",
+                active=False,
+                note="Fallback reference only unless no fresher Amazon evidence exists.",
+            )
+        )
+
+    line_review_path = _latest_line_review_snapshot(paths, category)
+    rows.append(
+        _freshness_record(
+            "Existing SKU line review snapshot",
+            line_review_path,
+            _date_from_json_or_mtime(line_review_path) if line_review_path else None,
+            "postgres_mcp_or_redshift_snapshot",
+            "Existing Sunco SKU coverage",
+            active=bool(line_review_path),
+            note="Refreshed by Step 0.",
+        )
+    )
+
+    stackline_path = latest_category_cache(paths, category)
+    rows.append(
+        _freshness_record(
+            "Redshift Stackline cache",
+            stackline_path,
+            cache_created_date(stackline_path) if stackline_path else None,
+            "redshift_stackline_cache",
+            "Amazon/Home Depot market demand",
+            active=bool(stackline_path),
+            note="Refreshed by Step 0 and checked by Step 3 preflight.",
+        )
+    )
+    return rows
+
+
+def summarize_freshness_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "No source freshness records were available."
+    parts = []
+    for row in rows:
+        active = "active" if row.get("active") else "reference"
+        age = row.get("age_days")
+        age_text = "Unknown age" if age is None else f"{age} days old"
+        parts.append(f"{row.get('source')}: {age_text} ({active}; {row.get('role')})")
+    return "\n".join(parts)
+
+
+def active_source_age_days(rows: list[dict[str, Any]]) -> int | None:
+    ages = [row.get("age_days") for row in rows if row.get("active") and row.get("age_days") is not None]
+    return max(ages) if ages else None
+
+
+def apply_freshness_rows(data: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    data["freshness_rows"] = rows
+    data["freshness_summary"] = summarize_freshness_rows(rows)
+    data["active_source_age_days"] = active_source_age_days(rows)
+    if data.get("active_source_age_days") is not None:
+        data["age_days"] = data["active_source_age_days"]
+
+
+def include_legacy_gap_evidence() -> bool:
+    return os.environ.get(INCLUDE_LEGACY_GAP_EVIDENCE_ENV, "").strip().lower() in {"1", "true", "yes", "y"}
+
+
 def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any]:
     intelligence = load_category_intelligence(paths, category)
     source_path, amazon_rerun_path, amazon_path = _reference_manifest_paths(paths)
-    source_payload = load_json(source_path) if source_path.exists() else {"recommendations": []}
-    amazon_rerun_payload = load_json(amazon_rerun_path) if amazon_rerun_path.exists() else {"recommendations": []}
-    amazon_payload = load_json(amazon_path) if amazon_path.exists() else {"recommendations": []}
+    legacy_enabled = include_legacy_gap_evidence()
+    source_payload = load_json(source_path) if legacy_enabled and source_path.exists() else {"recommendations": []}
+    amazon_rerun_payload = load_json(amazon_rerun_path) if legacy_enabled and amazon_rerun_path.exists() else {"recommendations": []}
+    amazon_payload = load_json(amazon_path) if legacy_enabled and amazon_path.exists() else {"recommendations": []}
 
     all_source_rows = list(source_payload.get("recommendations", []))
     all_amazon_rows = list(amazon_rerun_payload.get("recommendations", []))
@@ -446,11 +639,12 @@ def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any
         source_from_amazon_count = len(source_rows)
 
     generated = parse_generated_date(source_payload) or parse_generated_date(amazon_payload)
-    return {
+    data = {
         "source_path": str(source_path),
         "amazon_rerun_path": str(amazon_rerun_path),
         "amazon_path": str(amazon_path),
         "generated": generated,
+        "legacy_seed_age_days": age_days(generated),
         "age_days": age_days(generated),
         "source_rows": source_rows,
         "amazon_rows": amazon_rows,
@@ -464,6 +658,19 @@ def load_category_data(paths: ProjectPaths, category: Category) -> dict[str, Any
         "supplemental_warnings": _unique_warnings(source_warnings + amazon_warnings),
         "category_intelligence": intelligence,
     }
+    apply_freshness_rows(
+        data,
+        build_step1_freshness_rows(
+            paths=paths,
+            category=category,
+            generated=generated,
+            source_path=source_path,
+            amazon_rerun_path=amazon_rerun_path,
+            amazon_path=amazon_path,
+            include_legacy_active=legacy_enabled,
+        ),
+    )
+    return data
 
 
 def _gap_evidence_to_step1_row(evidence: dict[str, Any], category: Category) -> dict[str, Any]:
@@ -537,7 +744,9 @@ def _write_summary(workbook, category: Category, data: dict[str, Any]) -> None:
         ("Supplemental source candidates", data["source_supplemental_count"]),
         ("Exact Amazon recommendations", data["amazon_exact_count"]),
         ("Supplemental Amazon candidates", data["amazon_supplemental_count"]),
-        ("Data age days", "Unknown" if data["age_days"] is None else str(data["age_days"])),
+        ("Active source age days", "Unknown" if data["age_days"] is None else str(data["age_days"])),
+        ("Legacy seed age days", "Unknown" if data.get("legacy_seed_age_days") is None else str(data["legacy_seed_age_days"])),
+        ("Source freshness detail", data.get("freshness_summary") or "No source freshness records were available."),
         ("Why these ideations were selected", SUCCESS_PROXY_TEXT),
         ("Decision tree", _decision_tree_text()),
         ("Supplemental candidate rule", f"Use the natural exact-category result count plus up to {SUPPLEMENTAL_CANDIDATES_PER_TAB} warning-labeled adjacent candidate per recommendation tab."),
@@ -625,9 +834,22 @@ def _write_source_audit(workbook, category: Category, data: dict[str, Any]) -> N
         ("Cache", "All", "Source manifest", data["source_path"], data["source_path"]),
         ("Cache", "All", "Corrected Amazon rerun evidence", data["amazon_rerun_path"], data["amazon_rerun_path"]),
         ("Cache", "All", "Amazon manifest", data["amazon_path"], data["amazon_path"]),
-        ("Freshness", "All", "Generated date", str(data.get("generated") or "Unknown"), ""),
+        ("Freshness", "All", "Legacy seed generated date", str(data.get("generated") or "Unknown"), ""),
+        ("Freshness", "All", "Active source age days", "Unknown" if data.get("age_days") is None else str(data.get("age_days")), ""),
+        ("Freshness", "All", "Source freshness detail", data.get("freshness_summary") or "No source freshness records were available.", ""),
         ("Category intelligence", category.run_name, "Backend SQLite database", format_intelligence_audit(intelligence), str(intelligence.database_path)),
     ]
+    for freshness in data.get("freshness_rows", []):
+        rows.append((
+            "Freshness",
+            category.run_name,
+            freshness.get("source"),
+            (
+                f"{freshness.get('generated')} | age_days={freshness.get('age_days')} | "
+                f"{'active' if freshness.get('active') else 'reference'} | {freshness.get('note')}"
+            ),
+            freshness.get("path"),
+        ))
     if data.get("source_from_amazon_count"):
         rows.append((
             "Display note",
@@ -732,7 +954,7 @@ def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh
             freshness = f"{data['age_days']} days old"
         refresh_note = "Force refresh requested." if force_refresh else "Force refresh not requested."
         if data["age_days"] is None or data["age_days"] > 30 or force_refresh:
-            refresh_note += " Fresh collection should run before final decisions if live collectors are configured."
+            refresh_note += " Active source freshness is outside the 30-day target or a force refresh was requested; run Step 0 before final decisions."
         if not data["source_rows"] and not data["amazon_rows"]:
             refresh_note += " No cached rows were available for this category, so this workbook is an audit-ready empty run shell."
 
@@ -741,7 +963,9 @@ def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh
             ("Category", category.run_name),
             ("Owner", category.owner),
             ("Generated", timestamp()),
-            ("Data freshness", freshness),
+            ("Active source freshness", freshness),
+            ("Legacy seed age days", "Unknown" if data.get("legacy_seed_age_days") is None else str(data["legacy_seed_age_days"])),
+            ("Source freshness detail", data.get("freshness_summary") or "No source freshness records were available."),
             ("Refresh note", refresh_note),
             ("Primary competitor channel", "Amazon"),
             ("Secondary competitor channel", "Home Depot Marketplace"),
