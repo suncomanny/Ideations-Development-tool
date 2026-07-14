@@ -22,6 +22,11 @@ class CategoryProfile:
     include_description: bool = False
 
 
+STRATEGIC_OUTLIER_LIMIT = 2
+HIGH_OUTPUT_PANEL_LUMEN_THRESHOLD = 15_000
+HIGH_OUTPUT_PANEL_WATT_THRESHOLD = 100
+
+
 DEFAULT_EXCLUDE_TERMS = (
     "accessory",
     "accessor",
@@ -1041,6 +1046,96 @@ def _priority_confidence(score: float, rows: list[dict[str, Any]]) -> tuple[str,
     return "Medium", "Needs more evidence"
 
 
+def _candidate_identity(row: dict[str, Any]) -> tuple[str, str]:
+    return (_text(row.get("source_url") or row.get("review_url")), _text(row.get("recommendation")).lower())
+
+
+def _recommendation_body(value: Any) -> str:
+    text = _text(value)
+    for marker in [
+        "Shopify ecommerce candidate:",
+        "Strategic outlier watchlist:",
+    ]:
+        if text.lower().startswith(marker.lower()) and ":" in text:
+            return text.split(":", 1)[1].strip()
+    return text
+
+
+def _strategic_high_output_reason(category_name: str, row: dict[str, Any]) -> str:
+    row_text = " ".join(
+        _text(row.get(key))
+        for key in [
+            "subcategory",
+            "recommendation",
+            "classification",
+            "example",
+            "why_gap",
+            "sunco_check",
+        ]
+    )
+    if "panel" not in f"{category_name} {row_text}".lower():
+        return ""
+    if not _text(row.get("source_url") or row.get("review_url")):
+        return ""
+    perf = normalize_luminaire_performance(row_text)
+    max_lumens = max(perf.lumen_values, default=0.0)
+    max_watts = max(perf.watt_values, default=0.0)
+    if max_lumens < HIGH_OUTPUT_PANEL_LUMEN_THRESHOLD or max_watts < HIGH_OUTPUT_PANEL_WATT_THRESHOLD:
+        return ""
+    metrics = row.get("_movement_metrics") or {}
+    decrease = _as_float(metrics.get("decrease"))
+    events = _as_int(metrics.get("events"))
+    days_since_value = metrics.get("days_since_last_decrease")
+    days_since = _as_float(days_since_value) if days_since_value is not None else None
+    if decrease <= 0 or events < 3:
+        return ""
+    if days_since is not None and days_since > 30:
+        return ""
+    return (
+        f"High-output panel outlier with {max_lumens:g} lumen / {max_watts:g} watt class evidence, "
+        f"{decrease:g} observed stock decrease units, {events} decrease event(s)"
+        f"{f', and last decrease {int(days_since)} day(s) from latest scrape' if days_since is not None else ''}."
+    )
+
+
+def _mark_strategic_outlier(row: dict[str, Any], reason: str) -> dict[str, Any]:
+    marked = dict(row)
+    body = _recommendation_body(marked.get("recommendation"))
+    marked["_strategic_outlier"] = True
+    marked["_strategic_outlier_reason"] = reason
+    marked["recommendation"] = f"Strategic outlier watchlist: {body}" if body else "Strategic outlier watchlist"
+    marked["classification"] = "Strategic outlier / High-output watchlist"
+    marked["priority"] = "Medium"
+    marked["confidence"] = "Directional"
+    marked["why_gap"] = (
+        f"{_text(marked.get('why_gap'))}\n\n"
+        f"Strategic outlier note: {reason} It fell below the normal Step 1B rank cutoff but remains visible for PM review."
+    ).strip()
+    marked["pm_action"] = (
+        "Review as a strategic high-output outlier. Confirm application fit, installation constraints, heat/load profile, "
+        "certifications, vendor feasibility, and whether demand is broader than one competitor PDP before PRD/RFQ."
+    )
+    return marked
+
+
+def _select_candidates_with_outliers(category_name: str, candidates: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    selected = candidates[:limit]
+    selected_keys = {_candidate_identity(row) for row in selected}
+    outliers: list[tuple[float, dict[str, Any]]] = []
+    for row in candidates[limit:]:
+        if _candidate_identity(row) in selected_keys:
+            continue
+        reason = _strategic_high_output_reason(category_name, row)
+        if not reason:
+            continue
+        row_text = " ".join(_text(row.get(key)) for key in ["recommendation", "example", "why_gap"])
+        perf = normalize_luminaire_performance(row_text)
+        outlier_rank = max(perf.lumen_values, default=0.0) + _as_float(row.get("_ecommerce_score"))
+        outliers.append((outlier_rank, _mark_strategic_outlier(row, reason)))
+    outliers.sort(key=lambda item: item[0], reverse=True)
+    return selected + [row for _, row in outliers[:STRATEGIC_OUTLIER_LIMIT]]
+
+
 def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]], limit: int = 16) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
     grow_light_category = _is_grow_light_category(category_name)
@@ -1136,4 +1231,4 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
             }
         )
     candidates.sort(key=lambda row: (float(row.get("_ecommerce_score") or 0), int(row.get("_ecommerce_group_size") or 0)), reverse=True)
-    return candidates[:limit]
+    return _select_candidates_with_outliers(category_name, candidates, limit)

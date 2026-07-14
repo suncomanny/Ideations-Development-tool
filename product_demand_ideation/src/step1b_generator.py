@@ -267,6 +267,8 @@ def _recommendation_body(value: Any) -> str:
         "Existing Sunco coverage, but missing feature:",
         "Product Revision or merchandising review:",
         "New variant opportunity:",
+        "Strategic outlier watchlist:",
+        "Strategic outlier / High-output watchlist:",
     ]:
         if text.lower().startswith(marker.lower()):
             if ":" in text:
@@ -862,7 +864,23 @@ def _apply_product_demand_overlay(
             row["sunco_check"] = note
             row["_sunco_catalog_coverage_score"] = coverage_score
             row["_technology_gap_features"] = missing_features
-            if coverage_score >= 75 and missing_features:
+            if row.get("_strategic_outlier"):
+                row["classification"] = "Strategic outlier / High-output watchlist"
+                row["priority"] = "Medium"
+                row["confidence"] = "Directional"
+                _set_recommendation_label(row, "Strategic outlier / High-output watchlist")
+                row["sunco_check"] = _append_note(
+                    note,
+                    (
+                        "Strategic outlier lane: source-backed high-output concept kept visible despite falling below "
+                        "the normal Step 1B rank cutoff. Treat as a watchlist/RFQ-screening hypothesis, not a standard panel replacement."
+                    ),
+                )
+                row["pm_action"] = (
+                    "Review as a strategic high-output outlier. Confirm application fit, installation constraints, heat/load profile, "
+                    "certifications, vendor feasibility, and whether demand is broader than one competitor PDP before PRD/RFQ."
+                )
+            elif coverage_score >= 75 and missing_features:
                 row["classification"] = "Existing Sunco coverage, but missing feature"
                 _set_recommendation_label(row, "Existing Sunco coverage, but missing feature", display_missing_features)
                 row["pm_action"] = (
@@ -997,7 +1015,15 @@ def _apply_product_demand_overlay(
                 reverse=True,
             )
         else:
-            scored_rows.sort(key=lambda item: float(item.get("_product_demand_score") or 0), reverse=True)
+            if key == "source_rows":
+                scored_rows.sort(
+                    key=lambda item: (
+                        1 if item.get("_strategic_outlier") else 0,
+                        -float(item.get("_product_demand_score") or 0),
+                    )
+                )
+            else:
+                scored_rows.sort(key=lambda item: float(item.get("_product_demand_score") or 0), reverse=True)
         output[key] = scored_rows
     _attach_competitor_images(paths, output.get("source_rows", []), category_slug)
     output["product_demand_overlay"] = overlay_rows
