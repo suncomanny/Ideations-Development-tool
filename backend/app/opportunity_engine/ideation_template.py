@@ -85,6 +85,28 @@ COLUMN_MAP = {
 
 PRD_SPEC_COLUMNS = set(COLUMN_MAP) - {"research_notes"}
 
+PM_SKIP_MARKERS = (
+    "[skip]",
+    "[do not convert]",
+    "[do not move forward]",
+    "[hold]",
+)
+PM_SKIP_VALUES = {
+    "skip",
+    "do not convert",
+    "do not move forward",
+    "hold",
+}
+
+SOURCE_MAPPING_HEADERS = [
+    "Ideation Name",
+    "Why selected",
+    "Key evidence used",
+    "Reference SKU rationale",
+    "Source URL",
+    "URL status",
+]
+
 
 def _clean_prd_requirement_text(key: str, value: Any) -> Any:
     if key not in PRD_SPEC_COLUMNS or not isinstance(value, str):
@@ -114,6 +136,9 @@ def _clean_prd_requirement_text(key: str, value: Any) -> Any:
     text = value
     for old, new in replacements.items():
         text = text.replace(old, new)
+    text = re.sub(r"\s+target from Step 1 evidence\b", "", text, flags=re.IGNORECASE)
+    if text.strip().lower() == "target from step 1 evidence":
+        return None
     if key == "voltage":
         text = re.sub(r"\b(\d{2,3}\s*-\s*\d{2,3})(?!\s*[Vv])\b", r"\1V", text)
     return re.sub(r"\s{2,}", " ", text).strip()
@@ -233,66 +258,181 @@ def _reset_sheet_views(workbook) -> None:
         mapping.sheet_view.selection = [Selection(pane="bottomLeft", activeCell="A2", sqref="A2")]
 
 
-def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
+def _cell_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _record_has_values(record: dict[str, Any]) -> bool:
+    return any(_cell_text(value) for value in record.values())
+
+
+def _classification_from_recommendation(value: Any, fallback: str) -> str:
+    text = _cell_text(value)
+    lowered = text.lower()
+    for label in [
+        "Existing Sunco coverage, but missing feature",
+        "Product Revision or merchandising review",
+        "Strategic outlier / High-output watchlist",
+        "Strategic outlier watchlist",
+        "Possible feature gap",
+        "New variant opportunity",
+    ]:
+        if lowered.startswith(label.lower()) or label.lower() in lowered:
+            return "Strategic outlier / High-output watchlist" if label == "Strategic outlier watchlist" else label
+    return fallback
+
+
+def _pm_skip_reason(record: dict[str, Any], recommendation_key: str) -> str | None:
+    recommendation = _cell_text(record.get(recommendation_key))
+    lowered_recommendation = recommendation.lower()
+    for marker in PM_SKIP_MARKERS:
+        if lowered_recommendation.startswith(marker):
+            return f"PM skip marker in {recommendation_key}: {marker}"
+    for key in ["Priority", "Confidence", "PM Action", "PM action"]:
+        value = _cell_text(record.get(key)).lower()
+        if value in PM_SKIP_VALUES:
+            return f"PM skip value in {key}: {record.get(key)}"
+    return None
+
+
+def _gap_row_skip_reason(record: dict[str, Any], recommendation_key: str, evidence_keys: list[str]) -> str | None:
+    if not _cell_text(record.get(recommendation_key)):
+        return "missing recommendation"
+    skip_reason = _pm_skip_reason(record, recommendation_key)
+    if skip_reason:
+        return skip_reason
+    if not any(_cell_text(record.get(key)) for key in evidence_keys):
+        return "missing usable evidence, source link, or PM action"
+    return None
+
+
+def _format_skipped_rows(skipped_rows: list[str]) -> str:
+    if not skipped_rows:
+        return "None"
+    shown = skipped_rows[:20]
+    suffix = f"\n... {len(skipped_rows) - len(shown)} more skipped row(s)" if len(skipped_rows) > len(shown) else ""
+    return "\n".join(shown) + suffix
+
+
+def _clip_text(value: Any, max_chars: int = 1400) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 4].rstrip() + " ..."
+
+
+def _source_url_status(link_validation: Any) -> str:
+    text = str(link_validation or "").strip()
+    if not text:
+        return "No URL status available"
+    if " -> " in text:
+        return text.split(" -> ", 1)[1].strip()
+    return text
+
+
+def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     workbook = load_workbook(gap_workbook, data_only=False)
     rows: list[dict[str, Any]] = []
     exact_source_names: set[str] = set()
-    line_review_reference = _best_line_review_reference(workbook)
+    line_review_candidates = _line_review_reference_candidates(workbook)
+    line_review_reference = max(line_review_candidates, key=lambda item: (item["active_score"], item["total_revenue"])) if line_review_candidates else None
+    line_review_sku_lookup = _line_review_sku_lookup(line_review_candidates)
+    audit: dict[str, Any] = {
+        "recommendations_rows_read": 0,
+        "recommendations_rows_selected": 0,
+        "recommendations_rows_skipped": 0,
+        "amazon_rows_read": 0,
+        "amazon_rows_selected": 0,
+        "amazon_rows_skipped": 0,
+        "skipped_rows": [],
+    }
 
     if "Recommendations" in workbook.sheetnames:
         ws = workbook["Recommendations"]
         headers = [ws.cell(1, col).value for col in range(1, ws.max_column + 1)]
         for row_index in range(2, ws.max_row + 1):
             record = {str(headers[col - 1]): ws.cell(row_index, col).value for col in range(1, len(headers) + 1)}
+            if not _record_has_values(record):
+                continue
+            audit["recommendations_rows_read"] += 1
             recommendation = record.get("Recommendation")
-            is_supplemental = str(recommendation or "").strip().lower().startswith("[supplemental candidate]")
-            if recommendation and ((record.get("Priority") == "High" and record.get("Confidence") == "High") or is_supplemental):
-                why_text = str(record.get("Why This Is A True Gap") or "").lower()
-                source_label = "Amazon" if "amazon/stackline-derived display row" in why_text else "Sunco.com/ecommerce"
-                exact_source_names.add(str(record.get("Recommendation")).strip().lower())
-                rows.append({
-                    "source": source_label,
-                    "classification": "True Gap",
-                    "subcategory": record.get("Subcategory"),
-                    "name": record.get("Recommendation"),
-                    "priority": record.get("Priority"),
-                    "confidence": record.get("Confidence"),
-                    "example": record.get("Competitor / Ecommerce Example"),
-                    "url": record.get("Review Link"),
-                    "sunco_check": record.get("Sunco Active-Catalog Check"),
-                    "why": record.get("Why This Is A True Gap"),
-                    "action": record.get("PM Action"),
-                    "_line_review_reference": line_review_reference,
-                })
+            skip_reason = _gap_row_skip_reason(
+                record,
+                "Recommendation",
+                ["Why This Is A True Gap", "Competitor / Ecommerce Example", "Review Link", "Sunco Active-Catalog Check", "PM Action"],
+            )
+            if skip_reason:
+                audit["recommendations_rows_skipped"] += 1
+                audit["skipped_rows"].append(f"Recommendations row {row_index}: {skip_reason}")
+                continue
+            why_text = str(record.get("Why This Is A True Gap") or "").lower()
+            source_label = "Amazon" if "amazon/stackline-derived display row" in why_text else "Sunco.com/ecommerce"
+            exact_source_names.add(str(record.get("Recommendation")).strip().lower())
+            audit["recommendations_rows_selected"] += 1
+            rows.append({
+                "source": source_label,
+                "classification": _classification_from_recommendation(recommendation, "Step 1 opportunity"),
+                "subcategory": record.get("Subcategory"),
+                "name": record.get("Recommendation"),
+                "priority": record.get("Priority"),
+                "confidence": record.get("Confidence"),
+                "example": record.get("Competitor / Ecommerce Example"),
+                "url": record.get("Review Link"),
+                "sunco_check": record.get("Sunco Active-Catalog Check"),
+                "why": record.get("Why This Is A True Gap"),
+                "action": record.get("PM Action"),
+                "_line_review_reference": line_review_reference,
+                "_line_review_sku_lookup": line_review_sku_lookup,
+            })
 
     if "Amazon Recommendations" in workbook.sheetnames:
         ws = workbook["Amazon Recommendations"]
         headers = [ws.cell(1, col).value for col in range(1, ws.max_column + 1)]
         for row_index in range(2, ws.max_row + 1):
             record = {str(headers[col - 1]): ws.cell(row_index, col).value for col in range(1, len(headers) + 1)}
+            if not _record_has_values(record):
+                continue
+            audit["amazon_rows_read"] += 1
             recommendation = record.get("Amazon-channel recommendation")
-            confidence = str(record.get("Confidence") or "").strip().lower()
+            skip_reason = _gap_row_skip_reason(
+                record,
+                "Amazon-channel recommendation",
+                ["Stackline / Amazon evidence", "Example listing", "Review link", "Sunco Amazon coverage check", "PM action"],
+            )
+            if skip_reason:
+                audit["amazon_rows_skipped"] += 1
+                audit["skipped_rows"].append(f"Amazon Recommendations row {row_index}: {skip_reason}")
+                continue
             is_supporting_evidence = str(recommendation or "").strip().lower() in exact_source_names
-            is_supplemental = str(recommendation or "").strip().lower().startswith("[supplemental candidate]")
-            if recommendation and ((record.get("Priority") == "High" and (confidence == "high" or is_supporting_evidence)) or is_supplemental):
-                classification = record.get("Amazon classification") or "Amazon recommendation"
-                rows.append({
-                    "source": "Amazon",
-                    "classification": classification,
-                    "subcategory": record.get("Subcategory"),
-                    "name": record.get("Amazon-channel recommendation"),
-                    "priority": record.get("Priority"),
-                    "confidence": record.get("Confidence"),
-                    "example": record.get("Example listing"),
-                    "url": record.get("Review link"),
-                    "sunco_check": record.get("Sunco Amazon coverage check"),
-                    "why": record.get("Stackline / Amazon evidence"),
-                    "action": record.get("PM action"),
-                    "_line_review_reference": line_review_reference,
-                })
+            classification = record.get("Amazon classification") or _classification_from_recommendation(recommendation, "Amazon recommendation")
+            if is_supporting_evidence and "supporting" not in str(classification).lower():
+                classification = f"{classification} + Step 1 supporting evidence"
+            audit["amazon_rows_selected"] += 1
+            rows.append({
+                "source": "Amazon",
+                "classification": classification,
+                "subcategory": record.get("Subcategory"),
+                "name": record.get("Amazon-channel recommendation"),
+                "priority": record.get("Priority"),
+                "confidence": record.get("Confidence"),
+                "example": record.get("Example listing"),
+                "url": record.get("Review link"),
+                "sunco_check": record.get("Sunco Amazon coverage check"),
+                "why": record.get("Stackline / Amazon evidence"),
+                "action": record.get("PM action"),
+                "_line_review_reference": line_review_reference,
+                "_line_review_sku_lookup": line_review_sku_lookup,
+            })
 
     workbook.close()
-    return _dedupe_gap_rows(rows)
+    deduped_rows = _dedupe_gap_rows(rows)
+    audit["rows_after_dedupe"] = len(deduped_rows)
+    return deduped_rows, audit
+
+
+def _read_gap_rows(gap_workbook: Path) -> list[dict[str, Any]]:
+    rows, _audit = _read_gap_rows_with_audit(gap_workbook)
+    return rows
 
 
 def _to_float(value: Any) -> float | None:
@@ -309,9 +449,9 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _best_line_review_reference(workbook) -> dict[str, Any] | None:
+def _line_review_reference_candidates(workbook) -> list[dict[str, Any]]:
     if "Existing SKU Line Review" not in workbook.sheetnames:
-        return None
+        return []
     ws = workbook["Existing SKU Line Review"]
     headers = [str(ws.cell(1, col).value or "").strip() for col in range(1, ws.max_column + 1)]
     candidates: list[dict[str, Any]] = []
@@ -340,9 +480,46 @@ def _best_line_review_reference(workbook) -> dict[str, Any] | None:
             "product_url": record.get("Product URL"),
             "active_score": active_score,
         })
+    return candidates
+
+
+def _best_line_review_reference(workbook) -> dict[str, Any] | None:
+    candidates = _line_review_reference_candidates(workbook)
     if not candidates:
         return None
     return max(candidates, key=lambda item: (item["active_score"], item["total_revenue"]))
+
+
+def _normalize_sku_match_key(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
+
+
+def _strip_sku_pack_suffix(value: Any) -> str:
+    text = str(value or "").strip()
+    return re.sub(r"-(?:\d+)?(?:PK|PACK|PC|PCS)(?:[-.].*)?$", "", text, flags=re.IGNORECASE)
+
+
+def _line_review_sku_lookup(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        sku = str(candidate.get("sku") or "").strip()
+        if not sku:
+            continue
+        for key_source in {sku, _strip_sku_pack_suffix(sku)}:
+            key = _normalize_sku_match_key(key_source)
+            if key and key not in lookup:
+                lookup[key] = candidate
+    return lookup
+
+
+def _canonical_line_review_reference(sku: str, lookup: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    if not lookup:
+        return None
+    for key_source in (sku, _strip_sku_pack_suffix(sku)):
+        key = _normalize_sku_match_key(key_source)
+        if key in lookup:
+            return lookup[key]
+    return None
 
 
 def _append_unique(existing: str | None, new: str | None) -> str | None:
@@ -430,7 +607,7 @@ def _priority_channels_from_evidence(item: dict[str, Any], metrics: dict[str, An
     if "amazon" in profile or "stackline" in profile or source == "amazon":
         return "Amazon first; Shopify parity review if Sunco.com assortment coverage is incomplete."
     if "shopify" in profile or "ecommerce" in profile or "ecommerce" in source:
-        return "Shopify/front-end launch review first; Amazon follow-up if Stackline and pack economics support."
+        return "Shopify/front-end launch review first; Amazon follow-up if Stackline and marketplace economics support."
     return None
 
 
@@ -472,8 +649,6 @@ def _line_review_reference_text(reference: dict[str, Any]) -> str:
         f"Amazon {_format_money(float(reference.get('amazon_revenue') or 0))}",
     ]
     parts.append(" / ".join(revenue_bits))
-    if reference.get("pack_sizes"):
-        parts.append(f"pack sizes {reference.get('pack_sizes')}")
     if reference.get("vendor_cost") is not None:
         parts.append(f"vendor cost {_format_money(float(reference.get('vendor_cost')))}")
     return "; ".join(part for part in parts if part)
@@ -484,8 +659,9 @@ def _sunco_reference_from_coverage(item: dict[str, Any]) -> dict[str, str] | Non
     if not check or "0 strong" in check.lower():
         return None
     match = re.search(
-        r"(?:Partial Sunco active coverage found[^:]*:\s*)?([A-Z0-9][A-Z0-9_./-]{2,}):\s*([^\n.]+)",
+        r"(?:Partial Sunco active coverage found[^:]*:\s*|Sunco likely already has comparable active coverage[^:]*:\s*)?([A-Z][A-Z0-9_./-]{2,}):\s*([^\n.]+)",
         check,
+        flags=re.IGNORECASE,
     )
     if not match:
         return None
@@ -493,6 +669,16 @@ def _sunco_reference_from_coverage(item: dict[str, Any]) -> dict[str, str] | Non
     title = match.group(2).strip()
     if sku.lower() in {"active", "amazon", "shopify"}:
         return None
+    verified_reference = _canonical_line_review_reference(sku, item.get("_line_review_sku_lookup") or {})
+    if item.get("_line_review_sku_lookup") and not verified_reference:
+        return None
+    if verified_reference:
+        verified_sku = str(verified_reference.get("sku") or "").strip()
+        verified_title = str(verified_reference.get("title") or title).strip()
+        return {
+            "sku": verified_sku,
+            "source": f"Closest Sunco active-catalog coverage named in Step 1: {sku}; mapped to verified line-review reference {verified_sku}; {verified_title}",
+        }
     return {
         "sku": sku,
         "source": f"Closest Sunco active-catalog coverage named in Step 1: {sku}; {title}",
@@ -501,6 +687,8 @@ def _sunco_reference_from_coverage(item: dict[str, Any]) -> dict[str, str] | Non
 
 def _strategy_from_classification(value: str | None) -> str:
     text = (value or "").lower()
+    if "strategic outlier" in text or "watchlist" in text:
+        return "Strategic Watchlist"
     if "style" in text:
         return "Style Extension"
     if "feature" in text or "variant" in text:
@@ -554,14 +742,6 @@ def _extract_light_count_values(text: str) -> list[str]:
     return values
 
 
-def _extract_pack_count_values(text: str) -> list[str]:
-    values: list[str] = []
-    for value in re.findall(r"\b(\d+)\s*[-/]?\s*(?:pack|pk|count)\b", text, flags=re.IGNORECASE):
-        if value not in values:
-            values.append(value)
-    return values
-
-
 def _extract_sizes(text: str) -> list[str]:
     return [
         re.sub(r"\s+", " ", match.group(0)).replace("inch", "in").strip()
@@ -604,7 +784,7 @@ def _extract_wattage_text(text: str) -> str | None:
             values.append(value)
     if not values:
         return None
-    return " / ".join(values[:5]) + " target from Step 1 evidence"
+    return " / ".join(values[:5])
 
 
 def _extract_lumens_text(text: str) -> str | None:
@@ -624,7 +804,7 @@ def _extract_lumens_text(text: str) -> str | None:
 
     target_values = collect(r"brightness target\s+([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b")
     if target_values:
-        return " / ".join(target_values[:4]) + " target from Step 1 evidence"
+        return " / ".join(target_values[:4])
 
     values: list[str] = []
     for value in collect(r"\b([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b"):
@@ -632,7 +812,7 @@ def _extract_lumens_text(text: str) -> str | None:
             values.append(value)
     if not values:
         return None
-    return " / ".join(values[:4]) + " target from Step 1 evidence"
+    return " / ".join(values[:4])
 
 
 def _extract_cct_text(text: str) -> tuple[str | None, str | None]:
@@ -651,7 +831,7 @@ def _extract_cct_text(text: str) -> tuple[str | None, str | None]:
     if values:
         return "/".join(values[:4]), values[-1]
     if "selectable cct" in lowered or "switchable cct" in lowered:
-        return "Selectable CCT target from Step 1 evidence", None
+        return "Selectable CCT", None
     return None, None
 
 
@@ -1016,26 +1196,7 @@ def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[
     text = _evidence_text(item)
     base_name = str(item.get("name") or "").strip()
     light_counts = _extract_light_count_values(text)
-    pack_counts = _extract_pack_count_values(text)
     sizes = _extract_sizes(text)
-    if category.slug == "under_cabinet" and pack_counts:
-        candidates: list[dict[str, Any]] = []
-        for pack_count in pack_counts[:4]:
-            candidate = deepcopy(item)
-            label = f"{pack_count}-pack"
-            candidate["name"] = _candidate_name(base_name, label)
-            candidate["_parent_opportunity"] = base_name
-            candidate["_target_pack_count"] = pack_count
-            candidate["_sku_candidate_rationale"] = (
-                "Split from the parent opportunity because Step 1 evidence or PM action named this as a "
-                "distinct kit pack-count option. Step 3 should research this row as one candidate SKU."
-            )
-            candidate["_field_overrides"] = {
-                "size_form_factor": f"{pack_count}-pack under-cabinet kit",
-                "research_notes": f"Pack-count target: {pack_count}-pack; confirm battery capacity, mounting accessories, and Amazon pack economics.",
-            }
-            candidates.append(candidate)
-        return candidates
     if category.slug != "chandeliers":
         return [item]
     if not light_counts and len(sizes) <= 1:
@@ -1094,7 +1255,6 @@ def _build_research_notes(
         f"Priority channel rationale: {enriched.get('priority_channels')}" if enriched.get("priority_channels") else None,
         f"Parent opportunity: {item.get('_parent_opportunity')}" if item.get("_parent_opportunity") else None,
         f"SKU candidate target: {item.get('_target_light_count')}-light; size target {item.get('_target_size')}" if item.get("_target_light_count") else None,
-        f"SKU candidate target: {item.get('_target_pack_count')}-pack kit" if item.get("_target_pack_count") else None,
         f"SKU candidate rationale: {item.get('_sku_candidate_rationale')}" if item.get("_sku_candidate_rationale") else None,
         f"Evidence: {item.get('why')}",
         f"Sunco check: {item.get('sunco_check')}",
@@ -1212,10 +1372,8 @@ def _enrich_item(
             enriched["motion_sensor"] = "No unless selected as a motion-kit variant"
             enriched["linkable"] = "Yes; extension/corner accessories expected"
         enriched["size_form_factor"] = str(enriched.get("size_form_factor") or "").replace("Ceiling / chain-hanging or rod-hung", "under-cabinet kit")
-        if item.get("_target_pack_count"):
-            enriched["size_form_factor"] = f"{item.get('_target_pack_count')}-pack under-cabinet kit"
-        enriched["wattage_primary"] = "Integrated LED; wattage by puck/bar/tape length and pack count"
-        enriched["lumens_target"] = "Task-light output by kit type; per-light and total kit lumens"
+        enriched["wattage_primary"] = "Integrated LED; wattage by puck/bar/tape length and kit format"
+        enriched["lumens_target"] = "Task-light output by kit type and per-light output target"
         enriched["bulb_base_type"] = None
         enriched["bulb_shape"] = None
     if pricing:
@@ -1278,7 +1436,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
     ws = workbook["Ideations"]
     ws["B1"] = category.owner
     ws["E1"] = f"Prepared from {selected_gap.name} on {timestamp()}"
-    rows = _read_gap_rows(selected_gap)
+    rows, intake_audit = _read_gap_rows_with_audit(selected_gap)
     candidate_rows: list[dict[str, Any]] = []
     for item in rows:
         candidate_rows.extend(_sku_candidate_items(category, item))
@@ -1290,34 +1448,45 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
 
     if "Source Mapping" in workbook.sheetnames:
         mapping = workbook["Source Mapping"]
-        if mapping.max_row < 1:
-            mapping.append(["Ideation Name", "Why selected", "Key evidence used", "Reference SKU rationale"])
+        for col_index, header in enumerate(SOURCE_MAPPING_HEADERS, start=1):
+            cell = mapping.cell(1, col_index)
+            cell.value = header
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
         for item, enriched in zip(candidate_rows[:100], enriched_rows):
-            evidence_parts = [str(item.get("why") or ""), str(item.get("url") or "")]
-            if enriched.get("_link_validation"):
-                evidence_parts.append("Review link check: " + str(enriched.get("_link_validation")))
-            if item.get("_sku_candidate_rationale"):
-                evidence_parts.append("SKU candidate: " + str(item.get("_sku_candidate_rationale")))
+            evidence_parts = [
+                item.get("why"),
+                f"Review link check: {enriched.get('_link_validation')}" if enriched.get("_link_validation") else None,
+                f"SKU candidate: {item.get('_sku_candidate_rationale')}" if item.get("_sku_candidate_rationale") else None,
+            ]
+            source_url = str(item.get("url") or "").strip()
+            url_status = _source_url_status(enriched.get("_link_validation")) if source_url else "No source URL provided"
             mapping.append([
                 enriched.get("ideation_name") or item.get("name"),
                 (
-                    f"{item.get('classification')} with High priority and High confidence"
+                    f"{item.get('classification')} from PM-kept Step 1 row"
+                    f"; priority {item.get('priority') or 'not specified'}"
+                    f"; confidence {item.get('confidence') or 'not specified'}"
                     + (
                         f"; parent opportunity: {item.get('_parent_opportunity')}"
                         if item.get("_parent_opportunity")
                         else ""
                     )
                 ),
-                " | ".join(part for part in evidence_parts if part),
+                _clip_text(" | ".join(str(part) for part in evidence_parts if part)),
                 enriched.get("reference_sku_source")
                 or "Use Sunco.com/Shopify SKU first when available; otherwise use best-selling item by category revenue.",
+                source_url,
+                url_status,
             ])
             for cell in mapping[mapping.max_row]:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
         mapping.column_dimensions["A"].width = 42
         mapping.column_dimensions["B"].width = 48
-        mapping.column_dimensions["C"].width = 90
+        mapping.column_dimensions["C"].width = 72
         mapping.column_dimensions["D"].width = 72
+        mapping.column_dimensions["E"].width = 64
+        mapping.column_dimensions["F"].width = 52
 
     add_or_replace_audit_sheet(
         workbook,
@@ -1327,11 +1496,18 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             ("Owner", category.owner),
             ("Generated", timestamp()),
             ("Source Step 1 workbook", str(selected_gap)),
-            ("Step 1 opportunities selected", str(len(rows))),
+            ("Step 1 recommendation rows read", str(intake_audit.get("recommendations_rows_read", 0))),
+            ("Step 1 recommendation rows converted", str(intake_audit.get("recommendations_rows_selected", 0))),
+            ("Step 1 Amazon rows read", str(intake_audit.get("amazon_rows_read", 0))),
+            ("Step 1 Amazon rows converted", str(intake_audit.get("amazon_rows_selected", 0))),
+            ("Step 1 rows skipped", str(intake_audit.get("recommendations_rows_skipped", 0) + intake_audit.get("amazon_rows_skipped", 0))),
+            ("Skipped row detail", _format_skipped_rows(list(intake_audit.get("skipped_rows") or []))),
+            ("Step 1 opportunities after dedupe", str(intake_audit.get("rows_after_dedupe", len(rows)))),
             ("Step 2 SKU candidate rows", str(len(candidate_rows[:100]))),
-            ("SKU expansion rule", "Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct SKU-level options such as light count, form factor, or size. It does not force a minimum row count."),
-            ("Selection rule", "Priority = High and Confidence = High; true, feature, and style gaps are all allowed. Matching ideation names are merged across source tabs."),
-            ("Reference SKU rule", "Sunco.com/Shopify SKU first; if absent, use best-selling item by category revenue."),
+            ("SKU expansion rule", "Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct SKU-level options such as light count, form factor, output tier, finish, mounting, or size. It does not force a minimum row count."),
+            ("Pack-size rule", "Pack-size and pack-count recommendations are intentionally excluded from Step 2. Use the separate pack-size recommendation workflow for pack-count decisions."),
+            ("Selection rule", "PM row deletion is the gate. Step 2 converts remaining usable Step 1 rows, preserving Priority and Confidence as context instead of using them as hard filters."),
+            ("Reference SKU rule", "Sunco.com/Shopify coverage first, canonicalized against the Existing SKU Line Review; if absent, use best-selling item by category revenue."),
             ("MSRP target rule", "When market price samples exist, Target MSRP is based on the 50th-55th percentile of comparable listings and is independent from margin targets."),
             ("URL status rule", "Step 2 checks Step 1 review URLs live when the workbook is generated. 2xx/3xx means verified; 403/429 means blocked by retailer/CDN and needs manual browser review; 404/410 means invalid and should be replaced."),
             ("URL status summary", _url_validation_summary(url_validation_cache)),
