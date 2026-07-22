@@ -111,6 +111,12 @@ ACTION_NPD = "NPD"
 ACTION_REVISION = "Revision"
 ACTION_CONCEPT_REVIEW = "Concept Review"
 ACTION_HOLD = "Hold"
+ACTION_SORT_ORDER = {
+    ACTION_NPD: 0,
+    ACTION_REVISION: 1,
+    ACTION_CONCEPT_REVIEW: 2,
+    ACTION_HOLD: 3,
+}
 
 
 def _clean_prd_requirement_text(key: str, value: Any) -> Any:
@@ -711,6 +717,24 @@ def _strategy_from_classification(value: str | None) -> str:
     return ACTION_CONCEPT_REVIEW
 
 
+def _action_rank(value: Any) -> int:
+    text = _cell_text(value).lower()
+    if "npd" in text or "new product development" in text:
+        return ACTION_SORT_ORDER[ACTION_NPD]
+    if "revision" in text or "merchandising" in text or "existing sunco coverage" in text or "coverage exists" in text or "defend/optimize" in text or "sunco amazon incumbent" in text:
+        return ACTION_SORT_ORDER[ACTION_REVISION]
+    if "concept review" in text or "strategic outlier" in text or "watchlist" in text or "possible feature gap" in text or "partial coverage" in text:
+        return ACTION_SORT_ORDER[ACTION_CONCEPT_REVIEW]
+    if "hold" in text:
+        return ACTION_SORT_ORDER[ACTION_HOLD]
+    return 99
+
+
+def _candidate_action_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+    strategy = _strategy_from_classification(item.get("classification") or item.get("name"))
+    return (_action_rank(strategy), _cell_text(item.get("name")).lower())
+
+
 def _strip_action_prefix(value: Any) -> str:
     text = _cell_text(value)
     if not text:
@@ -743,6 +767,23 @@ def _ideation_name_with_action(item: dict[str, Any], strategy: str) -> str:
     if body:
         return f"{strategy}: {body}"
     return strategy
+
+
+def _revision_change_summary(item: dict[str, Any], enriched: dict[str, Any]) -> str | None:
+    if enriched.get("strategy") != ACTION_REVISION:
+        return None
+    target_sku = _cell_text(enriched.get("sunco_reference_sku"))
+    target = target_sku if target_sku and not target_sku.lower().startswith("tbd") else "matched active Sunco SKU/family"
+    action = _cell_text(item.get("action"))
+    if action:
+        if action.lower().startswith("revision target"):
+            return action
+        return f"Revise {target}: {action}"
+    feature_text = _cell_text(item.get("name"))
+    body = _strip_action_prefix(feature_text)
+    if body:
+        return f"Revise {target}: compare the active SKU/family against {body} and add the competitor-supported missing feature or merchandising update."
+    return f"Revise {target}: use the Step 1 Sunco coverage note and source links to confirm the specific rolling-change or merchandising update."
 
 
 def _evidence_text(item: dict[str, Any]) -> str:
@@ -1300,6 +1341,8 @@ def _build_research_notes(
     notes = [
         f"Source: {item.get('source')}",
         f"Recommended Product Action: {enriched.get('strategy') or item.get('classification')}",
+        f"Revision target SKU: {enriched.get('sunco_reference_sku')}" if enriched.get("strategy") == ACTION_REVISION else None,
+        f"Recommended revision changes: {_revision_change_summary(item, enriched)}" if enriched.get("strategy") == ACTION_REVISION else None,
         f"Demand summary: {enriched.get('stackline_data')}" if enriched.get("stackline_data") else None,
         f"Priority channel rationale: {enriched.get('priority_channels')}" if enriched.get("priority_channels") else None,
         f"Parent opportunity: {item.get('_parent_opportunity')}" if item.get("_parent_opportunity") else None,
@@ -1491,6 +1534,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
     candidate_rows: list[dict[str, Any]] = []
     for item in rows:
         candidate_rows.extend(_sku_candidate_items(category, item))
+    candidate_rows.sort(key=_candidate_action_sort_key)
     market_samples, market_sample_path = _load_market_price_samples(paths, category)
     url_validation_cache: dict[str, dict[str, Any]] = {}
     enriched_rows: list[dict[str, Any]] = []

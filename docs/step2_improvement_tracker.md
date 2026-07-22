@@ -40,6 +40,8 @@ Use the same product-action labels across all three steps:
 
 Keep gap reasons separate from product actions. Gap reasons can include feature gap, existing Sunco coverage, partial coverage, strategic outlier, or incumbent optimization, but they should not replace the product-action label.
 
+Sort product lists by product action first: `NPD`, then `Revision`, then `Concept Review`, then `Hold`. Revision rows must also identify the existing SKU/family to revise and the specific feature, spec, price, listing, or merchandising change being recommended.
+
 ## Improvement Checklist
 
 ### 1. Row Intake Contract

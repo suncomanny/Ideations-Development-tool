@@ -248,6 +248,32 @@ ACTION_NPD = "NPD"
 ACTION_REVISION = "Revision"
 ACTION_CONCEPT_REVIEW = "Concept Review"
 ACTION_HOLD = "Hold"
+ACTION_SORT_ORDER = {
+    ACTION_NPD: 0,
+    ACTION_REVISION: 1,
+    ACTION_CONCEPT_REVIEW: 2,
+    ACTION_HOLD: 3,
+}
+
+
+def _product_action_rank(value: Any) -> int:
+    text = _text(value).lower()
+    if "npd" in text or "new product development" in text:
+        return ACTION_SORT_ORDER[ACTION_NPD]
+    if "revision" in text or "existing sunco coverage" in text or "coverage exists" in text or "defend/optimize" in text or "sunco amazon incumbent" in text:
+        return ACTION_SORT_ORDER[ACTION_REVISION]
+    if "concept review" in text or "possible feature gap" in text or "strategic outlier" in text or "watchlist" in text or "partial coverage" in text:
+        return ACTION_SORT_ORDER[ACTION_CONCEPT_REVIEW]
+    if "hold" in text:
+        return ACTION_SORT_ORDER[ACTION_HOLD]
+    return 99
+
+
+def _action_sort_key(row: dict[str, Any]) -> tuple[int, str]:
+    return (
+        min(_product_action_rank(row.get("classification")), _product_action_rank(row.get("recommendation"))),
+        _text(row.get("recommendation")).lower(),
+    )
 
 
 def _display_feature(value: Any) -> str:
@@ -289,6 +315,37 @@ def _set_recommendation_label(row: dict[str, Any], label: str, features: list[st
     body = _recommendation_body(row.get("recommendation"))
     feature_note = f" ({', '.join(features)})" if features else ""
     row["recommendation"] = f"{label}{feature_note}: {body}" if body else f"{label}{feature_note}"
+
+
+def _coverage_target_label(note: Any) -> str:
+    text = _text(note)
+    if not text:
+        return "matched active Sunco SKU/family"
+    match = re.search(
+        r"(?:Partial Sunco active coverage found[^:]*:\s*|Sunco likely already has comparable active coverage[^:]*:\s*)?([A-Z][A-Z0-9_./-]{2,})\s*:\s*([^\n.;]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return "matched active Sunco SKU/family"
+    sku = match.group(1).strip()
+    title = match.group(2).strip()
+    if sku.lower() in {"active", "amazon", "shopify"}:
+        return "matched active Sunco SKU/family"
+    return f"{sku} ({title})" if title else sku
+
+
+def _revision_action_text(row: dict[str, Any], features: list[str], default_focus: str) -> str:
+    target = _coverage_target_label(row.get("sunco_check"))
+    if features:
+        return (
+            f"Revision target: {target}. Recommended change: add or clarify {', '.join(features)} on the matched active SKU/family. "
+            "Use as a rolling change, feature add, or PDP merchandising callout rather than a new part number by default."
+        )
+    return (
+        f"Revision target: {target}. Recommended change: {default_focus}. "
+        "Use the competitor demand signal to decide whether this is a product update, merchandising correction, or rolling-change request."
+    )
 
 
 def _tokens(value: str) -> set[str]:
@@ -819,12 +876,22 @@ def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_r
         if row.get("gap_reason") == "Sunco Amazon incumbent":
             row["classification"] = ACTION_REVISION
             note = _append_note("Sunco-owned Amazon row: use this as a defend-and-optimize benchmark.", note)
+            row["action"] = _revision_action_text(
+                {"sunco_check": note},
+                display_missing_features,
+                "defend and optimize Amazon listing, image story, pricing, and search placement",
+            )
         elif coverage_score >= 75:
             row["classification"] = ACTION_REVISION
             row["gap_reason"] = "Existing Amazon/Sunco coverage - optimize or revise"
             note = _append_note(
                 note,
                 "Amazon action: likely optimize listing, pack visibility, image story, pricing, or search placement before creating a new SKU.",
+            )
+            row["action"] = _revision_action_text(
+                {"sunco_check": note},
+                display_missing_features,
+                "optimize listing, pack visibility, image story, pricing, or search placement before creating a new SKU",
             )
         elif coverage_score >= 50:
             row["classification"] = ACTION_CONCEPT_REVIEW
@@ -904,19 +971,17 @@ def _apply_product_demand_overlay(
                 row["classification"] = ACTION_REVISION
                 row["gap_reason"] = "Existing Sunco coverage, but missing feature"
                 _set_recommendation_label(row, ACTION_REVISION, display_missing_features)
-                row["pm_action"] = (
-                    f"Treat {', '.join(display_missing_features)} as a Revision candidate on the matched active Sunco family. "
-                    "Use as a rolling change, feature add, or PDP merchandising callout path rather than a new part number by default."
-                )
+                row["pm_action"] = _revision_action_text(row, display_missing_features, "add the missing competitor-supported feature(s)")
             elif coverage_score >= 75:
                 row["classification"] = ACTION_REVISION
                 row["gap_reason"] = "Product Revision or merchandising review"
                 row["priority"] = "Medium"
                 row["confidence"] = "Coverage exists"
                 _set_recommendation_label(row, ACTION_REVISION)
-                row["pm_action"] = (
-                    "Treat as a Revision candidate on the matched active SKU. "
-                    "Use the competitor demand signal to improve title/spec coverage, price position, search/category placement, or running-change planning."
+                row["pm_action"] = _revision_action_text(
+                    row,
+                    [],
+                    "improve title/spec coverage, price position, search/category placement, or running-change planning",
                 )
             elif coverage_score >= 50:
                 row["classification"] = ACTION_CONCEPT_REVIEW
@@ -1032,6 +1097,7 @@ def _apply_product_demand_overlay(
         if key == "amazon_rows" and any(row.get("_stackline_local_sales") for row in scored_rows):
             scored_rows.sort(
                 key=lambda item: (
+                    -_action_sort_key(item)[0],
                     float(item.get("_stackline_local_sales") or 0),
                     float(item.get("_stackline_local_units") or 0),
                     float(item.get("_product_demand_score") or 0),
@@ -1039,15 +1105,14 @@ def _apply_product_demand_overlay(
                 reverse=True,
             )
         else:
-            if key == "source_rows":
-                scored_rows.sort(
-                    key=lambda item: (
-                        1 if item.get("_strategic_outlier") else 0,
-                        -float(item.get("_product_demand_score") or 0),
-                    )
+            scored_rows.sort(
+                key=lambda item: (
+                    _action_sort_key(item)[0],
+                    1 if item.get("_strategic_outlier") else 0,
+                    -float(item.get("_product_demand_score") or 0),
+                    _action_sort_key(item)[1],
                 )
-            else:
-                scored_rows.sort(key=lambda item: float(item.get("_product_demand_score") or 0), reverse=True)
+            )
         output[key] = scored_rows
     _attach_competitor_images(paths, output.get("source_rows", []), category_slug)
     output["product_demand_overlay"] = overlay_rows

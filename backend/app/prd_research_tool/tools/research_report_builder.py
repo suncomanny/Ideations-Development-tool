@@ -105,6 +105,16 @@ SUMMARY_METRIC_GUIDE_ROWS = [
         "Why did the tool classify this concept this way?",
     ],
     [
+        "Revision Target SKU",
+        "Existing Sunco/NSL SKU or active family to update when the action is Revision.",
+        "Which current product would we change instead of creating a new SKU?",
+    ],
+    [
+        "Recommended Revision Changes",
+        "Specific rolling-change, feature-add, or merchandising update recommended for a Revision row.",
+        "What exactly should the PM ask to change?",
+    ],
+    [
         "Outlook",
         "Directional recommendation for the ideation in its current configuration, such as favorable, mixed, or cautious.",
         "Given the category, competitor, pricing, and feature context, should this concept look attractive to pursue as configured?",
@@ -143,6 +153,12 @@ PRODUCT_ACTIONS = (
     PRODUCT_ACTION_CONCEPT_REVIEW,
     PRODUCT_ACTION_HOLD,
 )
+PRODUCT_ACTION_SORT_ORDER = {
+    PRODUCT_ACTION_NPD: 0,
+    PRODUCT_ACTION_REVISION: 1,
+    PRODUCT_ACTION_CONCEPT_REVIEW: 2,
+    PRODUCT_ACTION_HOLD: 3,
+}
 EVIDENCE_STRENGTH_STRONG = "Strong support"
 EVIDENCE_STRENGTH_DIRECTIONAL = "Directional support"
 EVIDENCE_STRENGTH_REVIEW = "Needs PM review"
@@ -998,6 +1014,14 @@ def extract_research_note_evidence(packet: dict[str, Any]) -> dict[str, str]:
     if product_action_match:
         evidence["product_action"] = clean_fragment(product_action_match.group(1))
 
+    revision_target_match = re.search(r"Revision target SKU:\s*([^\n]+)", notes, flags=re.IGNORECASE)
+    if revision_target_match:
+        evidence["revision_target_sku"] = clean_fragment(revision_target_match.group(1))
+
+    revision_changes_match = re.search(r"Recommended revision changes:\s*([^\n]+)", notes, flags=re.IGNORECASE)
+    if revision_changes_match:
+        evidence["revision_changes"] = clean_fragment(revision_changes_match.group(1))
+
     classification_match = re.search(r"Classification:\s*([^\n]+)", notes, flags=re.IGNORECASE)
     if classification_match and "product_action" not in evidence:
         evidence["product_action"] = clean_fragment(classification_match.group(1))
@@ -1100,25 +1124,36 @@ def normalize_product_action(value: Any) -> str:
 
 def recommended_product_action(packet: dict[str, Any], analysis: dict[str, Any] | None = None) -> str:
     """Return the approved PM-facing action label for this concept."""
-    if analysis and recommendation_priority(analysis) == "Hold / Do Not Prioritize Yet":
-        return PRODUCT_ACTION_HOLD
-
     identity = as_dict(packet.get("identity"))
     target_profile = as_dict(packet.get("target_profile"))
     evidence = extract_research_note_evidence(packet)
     context_values = [
-        identity.get("strategy"),
+        evidence.get("product_action"),
         identity.get("ideation_name"),
         target_profile.get("research_notes"),
-        evidence.get("product_action"),
         evidence.get("recommended_action"),
         evidence.get("sunco_coverage"),
+        identity.get("strategy"),
     ]
     for value in context_values:
         action = normalize_product_action(value)
         if action:
             return action
+    if analysis and recommendation_priority(analysis) == "Hold / Do Not Prioritize Yet":
+        return PRODUCT_ACTION_HOLD
     return PRODUCT_ACTION_CONCEPT_REVIEW
+
+
+def product_action_rank(value: Any) -> int:
+    action = normalize_product_action(value)
+    if action:
+        return PRODUCT_ACTION_SORT_ORDER[action]
+    return 99
+
+
+def payload_action_sort_key(payload: tuple[int, dict[str, Any], dict[str, Any], dict[str, Any]]) -> tuple[int, int]:
+    row_number, packet, analysis, _ = payload
+    return (product_action_rank(recommended_product_action(packet, analysis)), row_number)
 
 
 def opportunity_type_for(packet: dict[str, Any], analysis: dict[str, Any] | None = None) -> str:
@@ -1318,6 +1353,35 @@ def product_difference_summary(packet: dict[str, Any], analysis: dict[str, Any])
     if role:
         return f"Closest Sunco item is mainly a category anchor; exact spec difference needs PM review. {normalize_text(role)}"
     return "No close Sunco/NSL anchor was available for this row."
+
+
+def revision_target_sku(packet: dict[str, Any], analysis: dict[str, Any] | None = None) -> str:
+    """Return the existing SKU/family that should be revised for Revision rows."""
+    if recommended_product_action(packet, analysis) != PRODUCT_ACTION_REVISION:
+        return ""
+    identity = as_dict(packet.get("identity"))
+    evidence = extract_research_note_evidence(packet)
+    for value in [evidence.get("revision_target_sku"), identity.get("sunco_reference_sku")]:
+        text = normalize_text(value)
+        if text and not text.lower().startswith("tbd"):
+            return text
+    return "matched active Sunco SKU/family"
+
+
+def revision_change_summary(packet: dict[str, Any], analysis: dict[str, Any]) -> str:
+    """Return the concrete PM-facing change request for Revision rows."""
+    if recommended_product_action(packet, analysis) != PRODUCT_ACTION_REVISION:
+        return ""
+    evidence = extract_research_note_evidence(packet)
+    target = revision_target_sku(packet, analysis)
+    for value in [evidence.get("revision_changes"), evidence.get("recommended_action")]:
+        text = normalize_text(value)
+        if text:
+            return text
+    difference = product_difference_summary(packet, analysis)
+    if difference and "No close Sunco" not in difference:
+        return f"Revise {target}: {difference}"
+    return f"Revise {target}: compare the active SKU/family against the source links and apply the missing competitor-supported feature, spec, or merchandising change."
 
 
 def product_fit_classification(packet: dict[str, Any]) -> str:
@@ -1744,7 +1808,7 @@ def pm_decision_snapshot_rows(
     evidence = extract_research_note_evidence(packet)
     pricing_link = source_link_cell(evidence.get("review_link"), "Open price source")
 
-    return [
+    rows = [
         [
             "Concept Tracking Name",
             concept_tracking_name(packet),
@@ -1823,6 +1887,24 @@ def pm_decision_snapshot_rows(
             "",
         ],
     ]
+    if product_action == PRODUCT_ACTION_REVISION:
+        rows[2:2] = [
+            [
+                "Revision Target SKU",
+                revision_target_sku(packet, analysis),
+                evidence_strength,
+                "Existing Sunco/NSL SKU or active family the PM should revise instead of creating a new part number by default.",
+                "",
+            ],
+            [
+                "Recommended Revision Changes",
+                revision_change_summary(packet, analysis),
+                evidence_strength,
+                "Specific rolling-change, feature-add, or merchandising change to evaluate before RFQ.",
+                "",
+            ],
+        ]
+    return rows
 
 
 def write_pm_decision_snapshot(
@@ -3231,28 +3313,32 @@ def render_row_sheet(
         risk_watchout_rows(packet, analysis, action_summary),
     )
     row = section_header(ws, row, "Section A - Ideation + Current Sunco Context")
-    row = key_value_rows(
-        ws,
-        row,
-        [
-            ("Concept Tracking Name", tracking_name),
-            ("Recommended Product Action", recommended_product_action(packet, analysis)),
-            ("Gap Reason", product_fit_classification(packet)),
-            ("Recommended Channel", channel_strategy_label(packet, analysis)),
-            ("Category Owner", identity.get("category_owner")),
-            ("Category", identity.get("category")),
-            ("Subcategory", identity.get("subcategory")),
-            ("Reference Anchor SKU", identity.get("sunco_reference_sku")),
-            ("Reference Anchor Product", reference.get("title")),
-            ("Anchor Listing Price", reference.get("listing_price")),
-            ("Anchor Shopify Revenue 12mo", reference.get("shopify_revenue_12mo")),
-            ("Anchor Shopify Units 12mo", reference.get("shopify_units_12mo")),
-            ("Anchor Amazon Revenue 12mo", reference.get("amazon_revenue_12mo")),
-            ("Anchor Amazon Units 12mo", reference.get("amazon_units_12mo")),
-            ("Anchor Role", reference_anchor.get("primary_use")),
-            ("Gap vs Ideation", product_difference_summary(packet, analysis)),
-        ],
-    )
+    section_a_rows = [
+        ("Concept Tracking Name", tracking_name),
+        ("Recommended Product Action", recommended_product_action(packet, analysis)),
+    ]
+    if recommended_product_action(packet, analysis) == PRODUCT_ACTION_REVISION:
+        section_a_rows.extend([
+            ("Revision Target SKU", revision_target_sku(packet, analysis)),
+            ("Recommended Revision Changes", revision_change_summary(packet, analysis)),
+        ])
+    section_a_rows.extend([
+        ("Gap Reason", product_fit_classification(packet)),
+        ("Recommended Channel", channel_strategy_label(packet, analysis)),
+        ("Category Owner", identity.get("category_owner")),
+        ("Category", identity.get("category")),
+        ("Subcategory", identity.get("subcategory")),
+        ("Reference Anchor SKU", identity.get("sunco_reference_sku")),
+        ("Reference Anchor Product", reference.get("title")),
+        ("Anchor Listing Price", reference.get("listing_price")),
+        ("Anchor Shopify Revenue 12mo", reference.get("shopify_revenue_12mo")),
+        ("Anchor Shopify Units 12mo", reference.get("shopify_units_12mo")),
+        ("Anchor Amazon Revenue 12mo", reference.get("amazon_revenue_12mo")),
+        ("Anchor Amazon Units 12mo", reference.get("amazon_units_12mo")),
+        ("Anchor Role", reference_anchor.get("primary_use")),
+        ("Gap vs Ideation", product_difference_summary(packet, analysis)),
+    ])
+    row = key_value_rows(ws, row, section_a_rows)
     row = merged_text_row(
         ws,
         row,
@@ -4023,7 +4109,7 @@ def build_slide_index_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[s
     ws.title = "Index"
     ws.cell(row=1, column=1, value="Step 3 Slide Summary Index")
     ws.cell(row=1, column=1).font = TITLE_FONT
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=11)
     rows = []
     used_titles = {ws.title}
     for row_number, packet, analysis, normalized in payloads:
@@ -4033,6 +4119,8 @@ def build_slide_index_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[s
                 concept_tracking_name(packet),
                 slide_title(packet),
                 recommended_product_action(packet, analysis),
+                revision_target_sku(packet, analysis),
+                revision_change_summary(packet, analysis),
                 product_fit_classification(packet),
                 channel_strategy(packet, analysis),
                 as_dict(analysis.get("performance_estimation")).get("launch_outlook"),
@@ -4044,7 +4132,7 @@ def build_slide_index_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[s
         ws,
         3,
         "Slide Summary Sheets",
-        ["Row", "Concept Tracking Name", "Slide Title", "Recommended Product Action", "Gap Reason", "Channel Strategy", "Outlook", "Confidence", "Worksheet"],
+        ["Row", "Concept Tracking Name", "Slide Title", "Recommended Product Action", "Revision Target SKU", "Recommended Revision Changes", "Gap Reason", "Channel Strategy", "Outlook", "Confidence", "Worksheet"],
         rows,
     )
 
@@ -4127,7 +4215,7 @@ def build_summary_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[str, 
     ws.title = "Summary"
     ws.cell(row=1, column=1, value="Step 3 Research Summary")
     ws.cell(row=1, column=1).font = TITLE_FONT
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=9)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=13)
     row = key_value_rows(
         ws,
         3,
@@ -4170,6 +4258,8 @@ def build_summary_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[str, 
                 concept_tracking_name(packet),
                 normalize_text(identity.get("ideation_name")),
                 recommended_product_action(packet, analysis),
+                revision_target_sku(packet, analysis),
+                revision_change_summary(packet, analysis),
                 product_fit_classification(packet),
                 channel_strategy(packet, analysis),
                 as_dict(analysis.get("performance_estimation")).get("launch_outlook"),
@@ -4183,7 +4273,7 @@ def build_summary_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[str, 
         ws,
         row,
         "Completed Ideation Rows",
-        ["Row", "Concept Tracking Name", "Ideation", "Recommended Product Action", "Gap Reason", "Channel Strategy", "Outlook", "Confidence", "Amazon G2", "Amazon Evidence", "Worksheet"],
+        ["Row", "Concept Tracking Name", "Ideation", "Recommended Product Action", "Revision Target SKU", "Recommended Revision Changes", "Gap Reason", "Channel Strategy", "Outlook", "Confidence", "Amazon G2", "Amazon Evidence", "Worksheet"],
         completed_rows,
     )
 
@@ -4197,6 +4287,7 @@ def build_combined_workbook(
     payloads = completed_row_payloads(session_dir, rows=rows)
     if not payloads:
         return None
+    payloads.sort(key=payload_action_sort_key)
 
     wb = Workbook()
     summary_ws = wb.active
