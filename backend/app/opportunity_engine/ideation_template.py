@@ -15,7 +15,7 @@ from .category_intelligence import format_intelligence_audit, load_category_inte
 from .paths import ProjectPaths
 from .sql_audit import collect_sql_text
 from .url_validation import extract_urls, format_validation_notes, validate_urls
-from .utils import newest_file, timestamp
+from .utils import newest_file, slugify, timestamp
 from .validation import try_excel_com_open_save, validate_workbook
 from .workbook_common import add_or_replace_audit_sheet, clear_row_values, ensure_template_copy
 
@@ -179,10 +179,7 @@ def _template_path(paths: ProjectPaths) -> Path:
     template = paths.templates / "PRD_Research_Ideation_Template.xlsx"
     if template.exists():
         return template
-    fallback = paths.source_data / "schema_references" / "PRD_Research_Indoor_Residential_High_Confidence_Ideations_2026-05-13.xlsx"
-    if fallback.exists():
-        return fallback
-    raise FileNotFoundError("Missing PRD ideation template.")
+    raise FileNotFoundError(f"Missing PRD ideation template: {template}")
 
 
 def _attribute_profile_path() -> Path:
@@ -271,6 +268,36 @@ def _reset_sheet_views(workbook) -> None:
 
 def _cell_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _profile_attribute_mode(profile: dict[str, Any]) -> str:
+    mode = str(profile.get("attribute_mode") or "").strip().lower()
+    if mode:
+        return mode
+    if profile.get("inherits") == "decorative_fixture":
+        return "decorative_fixture"
+    return "integrated_led_fixture"
+
+
+def _profile_tokens(profile: dict[str, Any], key: str) -> set[str]:
+    values = profile.get(key) or []
+    if isinstance(values, str):
+        values = [values]
+    return {slugify(str(value)) for value in values if str(value or "").strip()}
+
+
+def _profile_allows(profile: dict[str, Any], key: str, *terms: str) -> bool:
+    tokens = _profile_tokens(profile, key)
+    if not tokens:
+        return True
+    return any(slugify(term) in tokens for term in terms)
+
+
+def _profile_sku_split_attributes(profile: dict[str, Any]) -> list[str]:
+    values = profile.get("sku_split_attributes") or profile.get("sku_defining_attributes") or []
+    if isinstance(values, str):
+        values = [values]
+    return [slugify(str(value)) for value in values if str(value or "").strip()]
 
 
 def _record_has_values(record: dict[str, Any]) -> bool:
@@ -860,7 +887,7 @@ def _extract_linear_size_tokens(text: str) -> list[str]:
     return values
 
 
-def _extract_wattage_text(text: str) -> str | None:
+def _extract_wattage_values(text: str) -> list[str]:
     values: list[str] = []
     for match in re.finditer(r"\b\d+(?:\.\d+)?\s*W\b", text, flags=re.IGNORECASE):
         value = match.group(0).replace(" ", "").upper()
@@ -872,37 +899,44 @@ def _extract_wattage_text(text: str) -> str | None:
             continue
         if value not in values:
             values.append(value)
-    if not values:
-        return None
-    return " / ".join(values[:5])
+    return values
+
+
+def _extract_wattage_text(text: str) -> str | None:
+    values = _extract_wattage_values(text)
+    return " / ".join(values[:5]) if values else None
+
+
+def _collect_lumen_values(text: str, pattern: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+        trailing = text[match.end(): match.end() + 8]
+        if re.match(r"\s*/\s*w", trailing, flags=re.IGNORECASE):
+            continue
+        numeric = _to_float(match.group(1))
+        if numeric is None or numeric < 300 or numeric > 200000:
+            continue
+        value = f"{numeric:,.0f}lm" if numeric.is_integer() else f"{numeric:,.1f}lm"
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _extract_lumen_values(text: str) -> list[str]:
+    target_values = _collect_lumen_values(text, r"brightness target\s+([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b")
+    if target_values:
+        return target_values[:4]
+
+    values: list[str] = []
+    for value in _collect_lumen_values(text, r"\b([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b"):
+        if value not in values:
+            values.append(value)
+    return values[:4]
 
 
 def _extract_lumens_text(text: str) -> str | None:
-    def collect(pattern: str) -> list[str]:
-        values: list[str] = []
-        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
-            trailing = text[match.end(): match.end() + 8]
-            if re.match(r"\s*/\s*w", trailing, flags=re.IGNORECASE):
-                continue
-            numeric = _to_float(match.group(1))
-            if numeric is None or numeric < 300 or numeric > 200000:
-                continue
-            value = f"{numeric:,.0f}lm" if numeric.is_integer() else f"{numeric:,.1f}lm"
-            if value not in values:
-                values.append(value)
-        return values
-
-    target_values = collect(r"brightness target\s+([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b")
-    if target_values:
-        return " / ".join(target_values[:4])
-
-    values: list[str] = []
-    for value in collect(r"\b([0-9][0-9,]*(?:\.\d+)?)\s*(?:lm|lumens)\b"):
-        if value not in values:
-            values.append(value)
-    if not values:
-        return None
-    return " / ".join(values[:4])
+    values = _extract_lumen_values(text)
+    return " / ".join(values[:4]) if values else None
 
 
 def _extract_cct_text(text: str) -> tuple[str | None, str | None]:
@@ -925,7 +959,8 @@ def _extract_cct_text(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _infer_integrated_mounting(text: str, default: str | None = None) -> str:
+def _infer_integrated_mounting(text: str, default: str | None = None, profile: dict[str, Any] | None = None) -> str:
+    profile = profile or {}
     lowered = text.lower()
     if "surface mount" in lowered or "surface-mount" in lowered:
         return "Surface mount"
@@ -933,58 +968,59 @@ def _infer_integrated_mounting(text: str, default: str | None = None) -> str:
         return "Direct ceiling mount"
     if "drop ceiling" in lowered or "lay in" in lowered or "lay-in" in lowered:
         return "Drop ceiling / lay-in grid"
-    if "troffer" in lowered or "center basket" in lowered:
+    if ("troffer" in lowered or "center basket" in lowered) and _profile_allows(profile, "form_factor_terms", "troffer", "center basket"):
         return "Recessed grid / troffer"
-    if "flat panel" in lowered or "panel" in lowered:
+    if ("flat panel" in lowered or "panel" in lowered) and _profile_allows(profile, "form_factor_terms", "flat panel", "panel"):
         return "Commercial ceiling panel mount"
     return default or "Mounting type by selected product form factor"
 
 
-def _infer_integrated_form_factor(item: dict[str, Any], text: str) -> str:
+def _infer_integrated_form_factor(item: dict[str, Any], text: str, profile: dict[str, Any] | None = None) -> str:
+    profile = profile or {}
     lowered = text.lower()
     pieces: list[str] = []
     sizes = _extract_panel_size_tokens(text)
     linear_sizes = _extract_linear_size_tokens(text)
-    if sizes:
+    if sizes and _profile_allows(profile, "form_factor_terms", "panel", "flat panel"):
         pieces.append("/".join(sizes))
-    if "vapor tight" in lowered or "vaportight" in lowered or "vapor proof" in lowered:
+    if ("vapor tight" in lowered or "vaportight" in lowered or "vapor proof" in lowered) and _profile_allows(profile, "form_factor_terms", "vapor tight"):
         pieces.extend(linear_sizes[:2])
         pieces.append("LED vapor tight fixture")
-    elif "wraparound" in lowered or "wrap around" in lowered:
+    elif ("wraparound" in lowered or "wrap around" in lowered) and _profile_allows(profile, "form_factor_terms", "wraparound"):
         pieces.extend(linear_sizes[:2])
         pieces.append("LED wraparound fixture")
-    elif "strip light" in lowered or "striplight" in lowered:
+    elif ("strip light" in lowered or "striplight" in lowered) and _profile_allows(profile, "form_factor_terms", "strip light"):
         pieces.extend(linear_sizes[:2])
         pieces.append("LED strip light")
-    elif "linear high bay" in lowered:
+    elif "linear high bay" in lowered and _profile_allows(profile, "form_factor_terms", "linear high bay"):
         pieces.extend(linear_sizes[:2])
         pieces.append("linear high bay")
-    elif "center basket" in lowered:
+    elif "center basket" in lowered and _profile_allows(profile, "form_factor_terms", "center basket"):
         pieces.append("center basket troffer")
-    elif "troffer" in lowered:
+    elif "troffer" in lowered and _profile_allows(profile, "form_factor_terms", "troffer"):
         pieces.append("troffer")
-    elif "surface mount" in lowered or "surface-mount" in lowered:
+    elif ("surface mount" in lowered or "surface-mount" in lowered) and _profile_allows(profile, "form_factor_terms", "surface mount panel"):
         pieces.append("surface-mount panel")
-    elif "grid frame" in lowered:
+    elif "grid frame" in lowered and _profile_allows(profile, "form_factor_terms", "grid frame panel"):
         pieces.append("grid frame panel")
-    elif "flat panel" in lowered:
+    elif "flat panel" in lowered and _profile_allows(profile, "form_factor_terms", "flat panel"):
         pieces.append("flat panel")
-    elif "panel" in lowered:
+    elif "panel" in lowered and _profile_allows(profile, "form_factor_terms", "panel"):
         pieces.append("panel")
     if not pieces:
         pieces.append(str(item.get("name") or "").strip() or "Integrated LED fixture")
     return ", ".join(piece for piece in pieces if piece)
 
 
-def _is_decorative_profile(category: Category, profile: dict[str, Any]) -> bool:
-    return profile.get("inherits") == "decorative_fixture" or category.slug in {"chandeliers"}
+def _is_decorative_profile(profile: dict[str, Any]) -> bool:
+    return _profile_attribute_mode(profile) == "decorative_fixture"
 
 
-def _apply_integrated_led_enrichment(enriched: dict[str, Any], category: Category, item: dict[str, Any], text: str) -> None:
+def _apply_integrated_led_enrichment(enriched: dict[str, Any], category: Category, item: dict[str, Any], text: str, profile: dict[str, Any]) -> None:
     cct_primary, cct_max = _extract_cct_text(text)
     lowered = text.lower()
-    enriched["size_form_factor"] = _infer_integrated_form_factor(item, text)
-    enriched["mounting_type"] = _infer_integrated_mounting(text, enriched.get("mounting_type"))
+    enriched["size_form_factor"] = _infer_integrated_form_factor(item, text, profile)
+    enriched["mounting_type"] = _infer_integrated_mounting(text, enriched.get("mounting_type"), profile)
     enriched["material"] = enriched.get("material")
     enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
     enriched["bulb_base_type"] = None
@@ -1094,7 +1130,7 @@ def _build_known_competitors(item: dict[str, Any]) -> str:
         value = item.get(key)
         if value:
             parts.append(str(value))
-    return "\n".join(parts) or "Amazon and competitor pool from templates/Competitors.md"
+    return "\n".join(parts) or "Step 1 competitor evidence or maintained category competitor references"
 
 
 def _normalize_match_text(value: str | None) -> str:
@@ -1282,37 +1318,208 @@ def _candidate_name(base_name: str, label: str) -> str:
     return f"{prefix}{clean_base} - {label}"
 
 
-def _sku_candidate_items(category: Category, item: dict[str, Any]) -> list[dict[str, Any]]:
+def _extract_mounting_values(text: str) -> list[str]:
+    lowered = text.lower()
+    values: list[str] = []
+    for needle, label in [
+        ("surface mount", "Surface mount"),
+        ("surface-mount", "Surface mount"),
+        ("direct mount", "Direct ceiling mount"),
+        ("direct-mount", "Direct ceiling mount"),
+        ("drop ceiling", "Drop ceiling / lay-in grid"),
+        ("lay-in", "Drop ceiling / lay-in grid"),
+        ("magnetic", "Magnetic mount"),
+        ("adhesive", "Adhesive mount"),
+        ("plug-in", "Plug-in"),
+        ("hardwired", "Hardwired"),
+        ("chain", "Chain-hung"),
+        ("rod", "Rod-hung"),
+    ]:
+        if needle in lowered and label not in values:
+            values.append(label)
+    return values
+
+
+def _extract_control_type_values(text: str) -> list[str]:
+    lowered = text.lower()
+    values: list[str] = []
+    for needle, label in [
+        ("0-10v", "0-10V dimming"),
+        ("0-10 v", "0-10V dimming"),
+        ("triac", "TRIAC dimming"),
+        ("motion", "Motion sensor"),
+        ("sensor", "Sensor control"),
+        ("remote", "Remote control"),
+        ("smart", "Smart connected"),
+    ]:
+        if needle in lowered and label not in values:
+            values.append(label)
+    return values
+
+
+def _extract_finish_values(text: str) -> list[str]:
+    lowered = text.lower()
+    values: list[str] = []
+    for needle, label in [
+        ("matte black", "Matte black"),
+        ("black", "Black"),
+        ("white", "White"),
+        ("bronze", "Bronze"),
+        ("brass", "Brass"),
+        ("gold", "Gold"),
+        ("nickel", "Nickel"),
+        ("rattan", "Natural rattan"),
+        ("woven", "Woven shade"),
+        ("wood", "Wood-look accent"),
+    ]:
+        if needle in lowered and label not in values:
+            values.append(label)
+    if "Matte black" in values and "Black" in values:
+        values.remove("Black")
+    return values
+
+
+def _sku_attribute_values(attribute: str, text: str) -> list[str]:
+    if attribute == "light_count":
+        return _extract_light_count_values(text)
+    if attribute in {"fixture_size", "size"}:
+        return _extract_sizes(text)
+    if attribute == "panel_size":
+        return _extract_panel_size_tokens(text)
+    if attribute == "linear_size":
+        return _extract_linear_size_tokens(text)
+    if attribute in {"output_tier", "lumens", "lumen_output"}:
+        return _extract_lumen_values(text)
+    if attribute in {"wattage", "wattage_tier"}:
+        return _extract_wattage_values(text)
+    if attribute in {"mounting", "mounting_type"}:
+        return _extract_mounting_values(text)
+    if attribute in {"control", "control_type"}:
+        return _extract_control_type_values(text)
+    if attribute in {"finish", "finish_color"}:
+        return _extract_finish_values(text)
+    return []
+
+
+def _sku_attribute_label(attribute: str, value: str) -> str:
+    if attribute == "light_count":
+        return f"{value}-light" if value.isdigit() else value
+    return value
+
+
+def _candidate_dimension_values(profile: dict[str, Any], text: str) -> list[dict[str, Any]]:
+    dimensions = []
+    for attribute in _profile_sku_split_attributes(profile):
+        values = _sku_attribute_values(attribute, text)
+        if values:
+            dimensions.append({"attribute": attribute, "values": values})
+    return dimensions
+
+
+def _candidate_values_for_index(dimensions: list[dict[str, Any]], index: int) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for dimension in dimensions:
+        values = list(dimension.get("values") or [])
+        if not values:
+            continue
+        value = values[index] if index < len(values) else values[0]
+        output[str(dimension.get("attribute"))] = value
+    return output
+
+
+def _candidate_target_label(attribute_values: dict[str, str]) -> str:
+    parts = [
+        _sku_attribute_label(attribute, value)
+        for attribute, value in attribute_values.items()
+        if value
+    ]
+    return ", ".join(dict.fromkeys(parts))
+
+
+def _candidate_field_overrides(
+    category: Category,
+    profile: dict[str, Any],
+    text: str,
+    attribute_values: dict[str, str],
+) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    light_count = attribute_values.get("light_count")
+    size = attribute_values.get("fixture_size") or attribute_values.get("size")
+    if light_count or size:
+        overrides["size_form_factor"] = _variant_size_form_factor(text, light_count, size)
+    if light_count:
+        overrides["wattage_primary"] = f"Replaceable LED bulb design; target {light_count}-light fixture"
+    if attribute_values.get("panel_size"):
+        overrides["size_form_factor"] = f"{attribute_values['panel_size']} integrated LED fixture"
+    if attribute_values.get("linear_size"):
+        form_factor = _infer_integrated_form_factor({"name": category.run_name}, text, profile)
+        overrides["size_form_factor"] = f"{attribute_values['linear_size']} {form_factor}"
+    if attribute_values.get("output_tier"):
+        overrides["lumens_target"] = attribute_values["output_tier"]
+    if attribute_values.get("lumens"):
+        overrides["lumens_target"] = attribute_values["lumens"]
+    if attribute_values.get("wattage") or attribute_values.get("wattage_tier"):
+        overrides["wattage_primary"] = attribute_values.get("wattage") or attribute_values.get("wattage_tier")
+    if attribute_values.get("mounting_type") or attribute_values.get("mounting"):
+        overrides["mounting_type"] = attribute_values.get("mounting_type") or attribute_values.get("mounting")
+    control_type = attribute_values.get("control_type") or attribute_values.get("control")
+    if control_type:
+        if "dimming" in control_type.lower():
+            overrides["dimming_type"] = control_type
+        elif "sensor" in control_type.lower():
+            overrides["motion_sensor"] = f"Yes - {control_type} named in Step 1 evidence"
+        elif "smart" in control_type.lower():
+            overrides["smart_connected"] = "Yes - smart control named in Step 1 evidence"
+    if attribute_values.get("finish_color") or attribute_values.get("finish"):
+        overrides["finish_color"] = attribute_values.get("finish_color") or attribute_values.get("finish")
+    return overrides
+
+
+def _sku_candidate_items(category: Category, profile: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
     text = _evidence_text(item)
     base_name = str(item.get("name") or "").strip()
-    light_counts = _extract_light_count_values(text)
-    sizes = _extract_sizes(text)
-    if category.slug != "chandeliers":
+    dimensions = _candidate_dimension_values(profile, text)
+    if not dimensions:
         return [item]
-    if not light_counts and len(sizes) <= 1:
+    split_count = max((len(dimension["values"]) for dimension in dimensions), default=1)
+    if split_count <= 1:
         return [item]
 
     candidates: list[dict[str, Any]] = []
-    max_candidates = 4
-    for index, light_count in enumerate(light_counts[:max_candidates]):
-        size = sizes[index] if index < len(sizes) else None
-        label = _variant_label(text, light_count, size)
+    max_candidates = int(profile.get("max_sku_candidates_per_row") or 4)
+    for index in range(min(split_count, max_candidates)):
+        attribute_values = _candidate_values_for_index(dimensions, index)
+        label = _candidate_target_label(attribute_values)
+        if not label:
+            continue
         candidate = deepcopy(item)
         candidate["name"] = _candidate_name(base_name, label)
         candidate["_parent_opportunity"] = base_name
-        candidate["_target_light_count"] = light_count
-        candidate["_target_size"] = size or "market-evidence size target"
-        candidate["_sku_candidate_rationale"] = (
-            "Split from the parent opportunity because Step 1 evidence or PM action named this as a "
-            "distinct SKU-level option. Step 3 should research this row as one candidate SKU, not as a broad family."
+        candidate["_target_light_count"] = attribute_values.get("light_count")
+        candidate["_target_size"] = (
+            attribute_values.get("fixture_size")
+            or attribute_values.get("size")
+            or attribute_values.get("panel_size")
+            or attribute_values.get("linear_size")
         )
-        candidate["_field_overrides"] = {
-            "size_form_factor": _variant_size_form_factor(text, light_count, size),
-            "wattage_primary": f"Bulb-dependent; target {light_count}-light replaceable LED bulb design",
-        }
+        candidate["_sku_candidate_target"] = label
+        candidate["_sku_candidate_rationale"] = (
+            "Split from the parent opportunity because the selected category profile allows this SKU-defining "
+            "attribute and Step 1 evidence or PM action explicitly named multiple options. Step 3 should "
+            "research this row as one candidate SKU, not as a broad family."
+        )
+        candidate["_field_overrides"] = _candidate_field_overrides(category, profile, text, attribute_values)
         candidates.append(candidate)
 
     return candidates or [item]
+
+
+def _step2_candidate_rows(category: Category, profile: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidate_rows: list[dict[str, Any]] = []
+    for item in rows:
+        candidate_rows.extend(_sku_candidate_items(category, profile, item))
+    candidate_rows.sort(key=_candidate_action_sort_key)
+    return candidate_rows
 
 
 def _url_validation_summary(cache: dict[str, dict[str, Any]]) -> str:
@@ -1346,14 +1553,14 @@ def _build_research_notes(
         f"Demand summary: {enriched.get('stackline_data')}" if enriched.get("stackline_data") else None,
         f"Priority channel rationale: {enriched.get('priority_channels')}" if enriched.get("priority_channels") else None,
         f"Parent opportunity: {item.get('_parent_opportunity')}" if item.get("_parent_opportunity") else None,
-        f"SKU candidate target: {item.get('_target_light_count')}-light; size target {item.get('_target_size')}" if item.get("_target_light_count") else None,
+        f"SKU candidate target: {item.get('_sku_candidate_target')}" if item.get("_sku_candidate_target") else None,
         f"SKU candidate rationale: {item.get('_sku_candidate_rationale')}" if item.get("_sku_candidate_rationale") else None,
         f"Evidence: {item.get('why')}",
         f"Sunco check: {item.get('sunco_check')}",
         f"Recommended action: {item.get('action')}",
         f"Review link: {item.get('url')}",
         f"Review link check: {link_validation}" if link_validation else None,
-        "Attribute enrichment: fields were filled from Step 1 evidence first, then category-profile defaults when safe.",
+        "Attribute enrichment: fields were filled from Step 1 evidence first, then category-intelligence/cache defaults, then selected category-profile defaults when safe.",
         "Confidence note: final electrical specs, certifications, packaging, and claims should be source-confirmed before RFQ release.",
     ]
     if profile.get("notes"):
@@ -1393,7 +1600,8 @@ def _enrich_item(
     text = _evidence_text(item)
     bulb_base = _extract_bulb_bases(text)
     light_count = _extract_light_count(text)
-    is_decorative = _is_decorative_profile(category, profile)
+    is_decorative = _is_decorative_profile(profile)
+    attribute_mode = _profile_attribute_mode(profile)
     metrics = _extract_demand_metrics(item)
     pricing = _market_msrp_target(item, market_samples) or _market_msrp_target_from_step1(item)
     link_validation = format_validation_notes(validate_urls(extract_urls(item.get("url")), url_validation_cache))
@@ -1431,29 +1639,29 @@ def _enrich_item(
         enriched["bulb_base_type"] = bulb_base or "E12/E26 target by design size"
         if light_count and bulb_base:
             normalized_count = light_count.replace("; optional", " / optional")
-            enriched["wattage_primary"] = f"Bulb-dependent; target {normalized_count} using {bulb_base} LED bulbs"
+            enriched["wattage_primary"] = f"Replaceable LED bulb design; target {normalized_count} using {bulb_base} LED bulbs"
         elif light_count:
-            enriched["wattage_primary"] = f"Bulb-dependent; target {light_count} replaceable LED bulbs"
+            enriched["wattage_primary"] = f"Replaceable LED bulb design; target {light_count}"
         else:
-            enriched["wattage_primary"] = "Bulb-dependent; bulb count defined by product design"
+            enriched["wattage_primary"] = "Replaceable LED bulb design; bulb count defined by product design"
         enriched["wattage_max"] = "Socket max by certification requirement"
         enriched["cct_primary"] = "2700K-3000K warm white target if bulbs are included"
         enriched["cct_max"] = "3000K target; avoid selectable CCT unless integrated LED"
-        enriched["lumens_target"] = "Bulb-dependent; total fixture output defined by included bulb bundle"
-        enriched["efficiency"] = "Bulb-dependent"
+        enriched["lumens_target"] = "Total fixture output defined by included bulb bundle"
+        enriched["efficiency"] = "Lamp efficiency based on selected LED bulb bundle"
         enriched["power_factor"] = "N/A for replaceable bulbs; integrated LED requirement when applicable"
         enriched["operating_temperature"] = "Residential indoor ambient operating range"
-    elif category.slug == "under_cabinet":
-        enriched["size_form_factor"] = _infer_integrated_form_factor(item, text)
-        enriched["mounting_type"] = _infer_integrated_mounting(text, enriched.get("mounting_type"))
+    elif attribute_mode == "under_cabinet_task_lighting":
+        enriched["size_form_factor"] = _infer_integrated_form_factor(item, text, profile)
+        enriched["mounting_type"] = _infer_integrated_mounting(text, enriched.get("mounting_type"), profile)
         enriched["material"] = enriched.get("material")
         enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
         enriched["bulb_base_type"] = None
         enriched["bulb_shape"] = None
     else:
-        _apply_integrated_led_enrichment(enriched, category, item, text)
+        _apply_integrated_led_enrichment(enriched, category, item, text, profile)
 
-    if category.slug == "under_cabinet":
+    if attribute_mode == "under_cabinet_task_lighting":
         lowered = text.lower()
         if "magnetic" in lowered or "rechargeable" in lowered or "puck" in lowered:
             enriched["mounting_type"] = "Magnetic and adhesive under-cabinet mount target"
@@ -1496,9 +1704,10 @@ def _fill_ideation_row(
     item: dict[str, Any],
     market_samples: list[dict[str, Any]],
     url_validation_cache: dict[str, dict[str, Any]],
+    profile: dict[str, Any] | None = None,
     intelligence_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    profile = _merged_attribute_profile(category, intelligence_defaults)
+    profile = profile or _merged_attribute_profile(category, intelligence_defaults)
     enriched = _enrich_item(category, item, profile, market_samples, url_validation_cache)
     values = {
         COLUMN_MAP[key]: _clean_prd_requirement_text(key, value)
@@ -1525,21 +1734,19 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
     ensure_template_copy(_template_path(paths), output)
     workbook = load_workbook(output)
     _clear_ideation_template(workbook)
+    profile = _merged_attribute_profile(category, intelligence.attribute_defaults)
 
     ws = workbook["Ideations"]
     ws["B1"] = category.owner
     ws["E1"] = f"Prepared from {selected_gap.name} on {timestamp()}"
     ws.cell(3, COLUMN_MAP["strategy"]).value = "Recommended Product Action *"
     rows, intake_audit = _read_gap_rows_with_audit(selected_gap)
-    candidate_rows: list[dict[str, Any]] = []
-    for item in rows:
-        candidate_rows.extend(_sku_candidate_items(category, item))
-    candidate_rows.sort(key=_candidate_action_sort_key)
+    candidate_rows = _step2_candidate_rows(category, profile, rows)
     market_samples, market_sample_path = _load_market_price_samples(paths, category)
     url_validation_cache: dict[str, dict[str, Any]] = {}
     enriched_rows: list[dict[str, Any]] = []
     for offset, item in enumerate(candidate_rows[:100], start=4):
-        enriched_rows.append(_fill_ideation_row(ws, offset, category, item, market_samples, url_validation_cache, intelligence.attribute_defaults))
+        enriched_rows.append(_fill_ideation_row(ws, offset, category, item, market_samples, url_validation_cache, profile=profile))
 
     if "Source Mapping" in workbook.sheetnames:
         mapping = workbook["Source Mapping"]
@@ -1600,7 +1807,10 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             ("Skipped row detail", _format_skipped_rows(list(intake_audit.get("skipped_rows") or []))),
             ("Step 1 opportunities after dedupe", str(intake_audit.get("rows_after_dedupe", len(rows)))),
             ("Step 2 SKU candidate rows", str(len(candidate_rows[:100]))),
-            ("SKU expansion rule", "Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct SKU-level options such as light count, form factor, output tier, finish, mounting, or size. It does not force a minimum row count."),
+            ("SKU expansion rule", "Default is one PM-kept Step 1 row to one Step 2 SKU concept row. Step 2 splits only when the selected category profile allows the SKU-defining attribute and Step 1 evidence or PM action explicitly names multiple options. It does not force a minimum row count."),
+            ("Category profile rule", "Only the selected category profile and its declared inherited profile, if any, guide Step 2 extraction/defaults. Category profiles do not create product ideas without Step 1 evidence or PM action text."),
+            ("Category profile mode", _profile_attribute_mode(profile)),
+            ("Category SKU split attributes", ", ".join(_profile_sku_split_attributes(profile)) or "None"),
             ("Pack-size rule", "Pack-size and pack-count recommendations are intentionally excluded from Step 2. Use the separate pack-size recommendation workflow for pack-count decisions."),
             ("Selection rule", "PM row deletion is the gate. Step 2 converts remaining usable Step 1 rows, preserving Priority and Confidence as context instead of using them as hard filters."),
             ("Recommended Product Action rule", "Step 2 uses the controlled PM-facing action vocabulary: NPD, Revision, Concept Review, Hold."),
