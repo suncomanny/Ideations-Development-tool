@@ -138,6 +138,24 @@ GROUP_TYPES = {
     "Ratings / Certifications": "Mixed",
 }
 
+BROAD_GENERATED_MATCH_TERMS = {
+    "beam angle",
+    "certifications",
+    "color temp",
+    "cri",
+    "dimming details",
+    "ip rating",
+    "linkable",
+    "lumens",
+    "moisture rating",
+    "mount type",
+    "power type",
+    "usage",
+    "voltage",
+    "wattage",
+    "yes",
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -645,10 +663,17 @@ def normalize_generated_label(attribute: str, value: Any) -> str | None:
 
 
 def generated_match_terms(attribute: str, raw_value: Any, label: str) -> list[str]:
-    terms = [label, clean_generated_profile_value(raw_value)]
+    terms = [label]
     attribute_key = slugify(attribute).replace("-", "_")
-    if attribute_key:
-        terms.append(attribute_key.replace("_", " "))
+    raw_text = clean_generated_profile_value(raw_value)
+    raw_key = raw_text.lower()
+    numeric_attributes = {"beam_angle", "cri", "lumens", "voltage", "wattage"}
+    if (
+        raw_text
+        and raw_key not in BROAD_GENERATED_MATCH_TERMS
+        and not (attribute_key in numeric_attributes and re.fullmatch(r"[\d,.\s/-]+", raw_text))
+    ):
+        terms.append(raw_text)
     if label.endswith(" selectable"):
         terms.append(label.replace(" selectable", ""))
     return sorted({term for term in terms if term})
