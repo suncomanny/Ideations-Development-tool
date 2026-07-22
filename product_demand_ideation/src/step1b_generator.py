@@ -26,9 +26,9 @@ if str(BACKEND_APP) not in sys.path:
 
 from ecommerce_evidence import ecommerce_rows_to_step1_rows, is_grow_light_candidate, load_or_refresh_ecommerce_snapshot
 from luminaire_performance import is_luminaire_category, normalize_luminaire_performance, performance_note
-from odbc_client import execute_odbc_sql, redshift_connection_source, redshift_connection_string, sanitize_connection_error
 from opportunity_engine.stackline_segments import STACKLINE_SEGMENT_OVERRIDES, sql_values, stackline_segments_for_category
 from product_demand_categories import choose_product_demand_category
+from redshift_query import execute_redshift_sql, is_redshift_mcp_source, sanitize_redshift_error
 from sunco_catalog_coverage import catalog_coverage_analysis, load_catalog_context_from_cache_or_snapshot
 
 
@@ -846,18 +846,25 @@ def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: s
     return rows
 
 
-def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str, limit: int = 10) -> tuple[list[dict[str, Any]], str]:
+def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str, limit: int = 10) -> tuple[list[dict[str, Any]], str, str]:
     sql = build_stackline_redshift_sql(category_slug, category_name, limit=max(limit * 3, 25))
     if not sql:
-        return [], "No Redshift Stackline segment mapping for this category."
+        return [], "No Redshift Stackline segment mapping for this category.", "redshift_unmapped_stackline_atlas"
     try:
-        items = execute_odbc_sql(redshift_connection_string(REDSHIFT_ODBC_CONNECTION), sql, timeout_seconds=240)
+        items, source_connector = execute_redshift_sql(
+            sql,
+            timeout_seconds=240,
+            default_odbc=REDSHIFT_ODBC_CONNECTION,
+            client_name="sunco-step1b-stackline-redshift",
+        )
     except Exception as exc:
         return [], (
-            f"Redshift Stackline query failed through {redshift_connection_source(REDSHIFT_ODBC_CONNECTION)}: "
-            f"{sanitize_connection_error(exc)}"
-        )
-    return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit, category_slug=category_slug), sql
+            "Redshift Stackline query failed through MCP-first Redshift access: "
+            f"{sanitize_redshift_error(exc)}"
+        ), "redshift_failed_stackline_atlas"
+    source_system = "redshift_mcp_stackline_atlas" if is_redshift_mcp_source(source_connector) else "redshift_odbc_stackline_atlas"
+    audit = f"Source connector: {source_connector}\n\n{sql}"
+    return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit, category_slug=category_slug), audit, source_system
 
 
 def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_rows: list[dict[str, Any]], category_slug: str) -> None:
@@ -1015,12 +1022,12 @@ def _apply_product_demand_overlay(
         output["source_supplemental_warnings"] = [
             "No Redshift ecommerce competitor rows were available for this category. Product Demand Step 1B did not use legacy local recommendation seeds."
         ]
-    redshift_stackline_rows, redshift_stackline_audit = _stackline_amazon_rows_from_redshift(category_slug, category_name)
+    redshift_stackline_rows, redshift_stackline_audit, redshift_stackline_source = _stackline_amazon_rows_from_redshift(category_slug, category_name)
     if redshift_stackline_rows:
         output["amazon_rows"] = redshift_stackline_rows
         output["amazon_exact_count"] = len(redshift_stackline_rows)
         output["amazon_supplemental_count"] = 0
-        output["product_demand_stackline_source"] = "redshift_odbc_stackline_atlas"
+        output["product_demand_stackline_source"] = redshift_stackline_source
         output["product_demand_stackline_audit"] = redshift_stackline_audit
         output["product_demand_stackline_note"] = (
             f"Live Redshift Stackline Atlas returned {len(redshift_stackline_rows)} Amazon rows. "
@@ -1133,7 +1140,7 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
         if not data.get("amazon_rows"):
             raise RuntimeError(
                 "Product Demand Step 1B stopped before writing a workbook because Amazon/Stackline rows are missing. "
-                "This would create an incomplete combined-model report. Fix the local Redshift ODBC/env config and rerun. "
+                "This would create an incomplete combined-model report. Fix Redshift MCP access or the local ODBC fallback and rerun. "
                 f"Stackline note: {data.get('product_demand_stackline_note') or 'No Stackline note was returned.'}"
             )
         line_review_context = existing["prepare_line_review_context"](paths, category)
@@ -1147,7 +1154,7 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
             inventory_source=inventory_source,
             catalog_snapshot_path=catalog_snapshot_path,
             catalog_source=catalog_source,
-            stackline_live=data.get("product_demand_stackline_source") == "redshift_odbc_stackline_atlas",
+            stackline_live=data.get("product_demand_stackline_source") in {"redshift_mcp_stackline_atlas", "redshift_odbc_stackline_atlas"},
         )
         template = existing["_template_path"](paths)
         run_stamp = existing["timestamp"]()

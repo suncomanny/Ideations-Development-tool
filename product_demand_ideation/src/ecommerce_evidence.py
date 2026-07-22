@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from luminaire_performance import normalize_luminaire_performance
-from odbc_client import execute_odbc_sql, redshift_connection_string
+from redshift_query import execute_redshift_sql, is_redshift_mcp_source
 
 
 @dataclass(frozen=True)
@@ -698,21 +698,28 @@ def _snapshot_age_hours(payload: dict[str, Any]) -> float | None:
     return (datetime.now(timezone.utc) - timestamp).total_seconds() / 3600
 
 
-def _is_odbc_snapshot(payload: dict[str, Any]) -> bool:
-    return str(payload.get("source_system") or "").lower().startswith("redshift_odbc")
+def _is_redshift_snapshot(payload: dict[str, Any]) -> bool:
+    return str(payload.get("source_system") or "").lower().startswith(("redshift_mcp", "redshift_odbc"))
 
 
 def _should_refresh_ecommerce_snapshot(payload: dict[str, Any]) -> bool:
     if os.environ.get("PRODUCT_DEMAND_FORCE_ECOMMERCE_REFRESH", "").strip() == "1":
         return True
-    if not _is_odbc_snapshot(payload):
+    if not _is_redshift_snapshot(payload):
         return True
     max_age_hours = float(os.environ.get("PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS") or 24)
     age_hours = _snapshot_age_hours(payload)
     return age_hours is None or age_hours > max_age_hours
 
 
-def write_ecommerce_snapshot(exports_dir: Path, category_slug: str, source_system: str, sql: str, rows: list[dict[str, Any]]) -> Path:
+def write_ecommerce_snapshot(
+    exports_dir: Path,
+    category_slug: str,
+    source_system: str,
+    sql: str,
+    rows: list[dict[str, Any]],
+    source_connector: str | None = None,
+) -> Path:
     exports_dir.mkdir(parents=True, exist_ok=True)
     generated_at = utc_now()
     stamp = generated_at.replace("-", "").replace(":", "").split("+", 1)[0].replace("T", "_")
@@ -725,21 +732,28 @@ def write_ecommerce_snapshot(exports_dir: Path, category_slug: str, source_syste
         "sql": sql,
         "rows": rows,
     }
+    if source_connector:
+        payload["source_connector"] = source_connector
     target.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return target
 
 
-def refresh_ecommerce_snapshot_via_odbc(exports_dir: Path, category_slug: str, timeout_seconds: int = 240) -> Path:
+def refresh_ecommerce_snapshot_via_redshift(exports_dir: Path, category_slug: str, timeout_seconds: int = 240) -> Path:
     sql = build_ecommerce_sql(category_slug)
-    rows = execute_odbc_sql(redshift_connection_string(), sql, timeout_seconds=timeout_seconds)
-    return write_ecommerce_snapshot(exports_dir, category_slug, "redshift_odbc_dsn_ecommerce_competitor_snapshot", sql, rows)
+    rows, source_connector = execute_redshift_sql(sql, timeout_seconds=timeout_seconds, client_name="sunco-ecommerce-competitor-redshift")
+    source_system = (
+        "redshift_mcp_ecommerce_competitor_snapshot"
+        if is_redshift_mcp_source(source_connector)
+        else "redshift_odbc_dsn_ecommerce_competitor_snapshot"
+    )
+    return write_ecommerce_snapshot(exports_dir, category_slug, source_system, sql, rows, source_connector=source_connector)
 
 
 def load_or_refresh_ecommerce_snapshot(exports_dir: Path, category_slug: str) -> tuple[dict[str, Any], Path]:
     path = latest_ecommerce_snapshot(exports_dir, category_slug)
     payload = json.loads(path.read_text(encoding="utf-8")) if path else {}
     if path is None or _should_refresh_ecommerce_snapshot(payload):
-        path = refresh_ecommerce_snapshot_via_odbc(exports_dir, category_slug)
+        path = refresh_ecommerce_snapshot_via_redshift(exports_dir, category_slug)
         payload = json.loads(path.read_text(encoding="utf-8"))
     return payload, path
 

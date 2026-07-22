@@ -27,7 +27,7 @@ Expected production path:
 approved source connector -> local snapshot/cache refresh -> workbook generator
 ```
 
-Redshift ecommerce competitor evidence now prefers the local ODBC DSN:
+Redshift ecommerce competitor evidence now prefers Redshift MCP. The local ODBC DSN is still supported as the fallback when MCP is unavailable:
 
 ```text
 DSN=Redshift
@@ -39,7 +39,7 @@ If the Windows DSN does not persist credentials, create this local-only file:
 C:\Users\<user>\.sunco_ideation_development\.env
 ```
 
-Supported Redshift options:
+Supported Redshift ODBC fallback options:
 
 ```text
 REDSHIFT_ODBC_DSN=Redshift
@@ -104,7 +104,7 @@ Category profiles can be checked without generating workbooks:
 Audit Product Demand Category Profiles.py
 ```
 
-This uses the local Redshift ODBC DSN and writes a compact CSV audit under `product_demand_ideation/profile_audits/`. Use it before expanding 1B to a new category so noisy filters are fixed before leadership sees the output.
+This uses Redshift MCP first, falls back to local Redshift ODBC only when MCP is unavailable, and writes a compact CSV audit under `product_demand_ideation/profile_audits/`. Use it before expanding 1B to a new category so noisy filters are fixed before leadership sees the output.
 
 ## Model
 
@@ -141,10 +141,10 @@ The ecommerce layer is sourced from Redshift:
 The Redshift refresh path is:
 
 ```text
-local Amazon Redshift ODBC DSN -> pyodbc -> product_demand_ideation/experiments/<category>/exports/*_ecommerce_competitor_evidence_*.json
+Redshift MCP -> product_demand_ideation/experiments/<category>/exports/*_ecommerce_competitor_evidence_*.json
 ```
 
-Normal 1B runs refresh ecommerce snapshots through local Redshift ODBC when the newest snapshot is not ODBC-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window. Redshift MCP is not used by the integrated main tool.
+If Redshift MCP is unavailable, the tool falls back to local ODBC (`DSN=Redshift`, `REDSHIFT_DSN`, or equivalent local env settings). Normal 1B runs refresh ecommerce snapshots when the newest snapshot is not Redshift-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window.
 
 When Redshift ecommerce PDP rows exist for the selected category, 1B uses them to lead the main `Recommendations` tab. Amazon-derived display rows stay in `Amazon Recommendations`.
 

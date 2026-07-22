@@ -163,16 +163,21 @@ order by
 
 
 def run_coverage_query(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str, str | None]:
-    """Run the approved-domain coverage query through the local Redshift ODBC connector."""
+    """Run the approved-domain coverage query through Redshift MCP, with ODBC fallback."""
     if str(PRODUCT_DEMAND_SRC) not in sys.path:
         sys.path.insert(0, str(PRODUCT_DEMAND_SRC))
-    from odbc_client import execute_odbc_sql, redshift_connection_string, redshift_connection_source, sanitize_connection_error
+    from redshift_query import execute_redshift_sql, sanitize_redshift_error
 
     sql = build_coverage_sql(sources)
     try:
-        return execute_odbc_sql(redshift_connection_string(), sql, timeout_seconds=240), redshift_connection_source(), None
+        rows, connection_source = execute_redshift_sql(
+            sql,
+            timeout_seconds=240,
+            client_name="sunco-approved-competitor-source-audit",
+        )
+        return rows, connection_source, None
     except Exception as exc:  # pragma: no cover - depends on workstation ODBC credentials.
-        return [], redshift_connection_source(), sanitize_connection_error(exc)
+        return [], "Redshift MCP primary; ODBC fallback", sanitize_redshift_error(exc)
 
 
 def merge_coverage(sources: list[dict[str, Any]], coverage_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

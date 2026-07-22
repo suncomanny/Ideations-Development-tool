@@ -14,6 +14,7 @@ from typing import Any
 
 
 POSTGRES_MCP_URL = "https://mcpservers.sunco.com/v2/servers/postgres/mcp/"
+REDSHIFT_MCP_URL = "https://mcpservers.sunco.com/v2/servers/redshift/mcp/"
 
 
 class McpRemoteClient:

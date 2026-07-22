@@ -6,11 +6,12 @@ The product-demand model depends on four source families.
 
 ## Connection Contract
 
-The production version must run without Codex.
+The production version should keep database refresh separate from workbook generation.
 
 Preferred production access:
 
-- Redshift through a local ODBC DSN or `REDSHIFT_DSN`
+- Redshift through MCP when running from Codex or another MCP-capable runner
+- Redshift through a local ODBC DSN or `REDSHIFT_DSN` only as the fallback when MCP is unavailable
 - Postgres through MCP for Sunco catalog and line-review refreshes
 - secrets stored in the machine-local file, not in SharePoint:
 
@@ -20,8 +21,8 @@ C:\Users\<user>\.sunco_ideation_development\.env
 
 Development fallback:
 
-- Local Redshift ODBC, Postgres MCP, and approved cache/export files are the supported integrated runtime sources.
-- Redshift MCP should not be required by the workbook generator and is not used by the integrated main tool.
+- Redshift MCP, local Redshift ODBC fallback, Postgres MCP, and approved cache/export files are the supported integrated runtime sources.
+- Workbook generation should read refreshed snapshot files where possible; the refresh step owns live connector access.
 
 The workbook generator should read from local snapshot files written by a refresh step. That keeps database access separate from workbook creation and makes the tool easier to run, debug, and hand off.
 

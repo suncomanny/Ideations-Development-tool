@@ -37,13 +37,13 @@ def product_demand_src(paths: ProjectPaths) -> Path:
     return paths.root / "product_demand_ideation" / "src"
 
 
-def odbc_helpers(paths: ProjectPaths):
+def redshift_query_helpers(paths: ProjectPaths):
     src = product_demand_src(paths)
     if str(src) not in sys.path:
         sys.path.insert(0, str(src))
-    from odbc_client import execute_odbc_sql, redshift_connection_source, redshift_connection_string, sanitize_connection_error
+    from redshift_query import RedshiftQueryClient, sanitize_redshift_error
 
-    return execute_odbc_sql, redshift_connection_source, redshift_connection_string, sanitize_connection_error
+    return RedshiftQueryClient, sanitize_redshift_error
 
 
 def cache_dir(paths: ProjectPaths) -> Path:
@@ -488,21 +488,27 @@ def refresh_category_stackline_cache(
         target_sql.write_text(combined_sql(category), encoding="utf-8")
         return {"category": category.slug, "status": "dry_run", "sql": str(target_sql)}
 
-    execute_odbc_sql, redshift_connection_source, redshift_connection_string, sanitize_connection_error = odbc_helpers(paths)
-    connection_source = redshift_connection_source(REDSHIFT_ODBC_CONNECTION)
+    RedshiftQueryClient, sanitize_redshift_error = redshift_query_helpers(paths)
+    connection_source = ""
     try:
-        discovery_sql = build_segment_discovery_sql(category)
-        discovery_rows = execute_odbc_sql(redshift_connection_string(REDSHIFT_ODBC_CONNECTION), discovery_sql, timeout_seconds=timeout_seconds)
-        segment = choose_segment(category, discovery_rows)
-        if not segment:
-            target_sql.write_text(combined_sql(category), encoding="utf-8")
-            raise StacklineRefreshError(f"No Redshift Stackline segment matched {category.run_name}.")
+        with RedshiftQueryClient(
+            timeout_seconds=timeout_seconds,
+            default_odbc=REDSHIFT_ODBC_CONNECTION,
+            client_name="sunco-stackline-cache-redshift",
+        ) as redshift:
+            connection_source = redshift.connection_source
+            discovery_sql = build_segment_discovery_sql(category)
+            discovery_rows = redshift.execute_sql(discovery_sql, timeout_seconds=timeout_seconds)
+            segment = choose_segment(category, discovery_rows)
+            if not segment:
+                target_sql.write_text(combined_sql(category), encoding="utf-8")
+                raise StacklineRefreshError(f"No Redshift Stackline segment matched {category.run_name}.")
 
-        segment_id = str(segment.get("segment_id") or "")
-        metrics_rows = execute_odbc_sql(redshift_connection_string(REDSHIFT_ODBC_CONNECTION), build_period_metrics_sql(segment_id), timeout_seconds=timeout_seconds)
-        price_rows = execute_odbc_sql(redshift_connection_string(REDSHIFT_ODBC_CONNECTION), build_price_percentiles_sql(segment_id), timeout_seconds=timeout_seconds)
-        brand_rows = execute_odbc_sql(redshift_connection_string(REDSHIFT_ODBC_CONNECTION), build_top_brands_sql(segment_id), timeout_seconds=timeout_seconds)
-        product_rows = execute_odbc_sql(redshift_connection_string(REDSHIFT_ODBC_CONNECTION), build_top_products_sql(segment_id), timeout_seconds=timeout_seconds)
+            segment_id = str(segment.get("segment_id") or "")
+            metrics_rows = redshift.execute_sql(build_period_metrics_sql(segment_id), timeout_seconds=timeout_seconds)
+            price_rows = redshift.execute_sql(build_price_percentiles_sql(segment_id), timeout_seconds=timeout_seconds)
+            brand_rows = redshift.execute_sql(build_top_brands_sql(segment_id), timeout_seconds=timeout_seconds)
+            product_rows = redshift.execute_sql(build_top_products_sql(segment_id), timeout_seconds=timeout_seconds)
 
         target_sql.write_text(combined_sql(category, segment_id), encoding="utf-8")
         payload = build_cache_payload(
@@ -529,7 +535,7 @@ def refresh_category_stackline_cache(
     except StacklineRefreshError:
         raise
     except Exception as exc:
-        detail = sanitize_connection_error(exc)
+        detail = sanitize_redshift_error(exc)
         raise StacklineRefreshError(
             f"Redshift Stackline refresh failed for {category.run_name} through {connection_source}: {detail}"
         ) from exc
@@ -599,7 +605,7 @@ def refresh_redshift_stackline_caches(
 
     return {
         "generated_at": utc_now(),
-        "connection_source": "Redshift ODBC",
+        "connection_source": "Redshift MCP primary; ODBC fallback",
         "categories": len(categories),
         "results": results,
     }
