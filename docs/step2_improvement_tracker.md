@@ -30,16 +30,15 @@ Out of scope:
 - Final engineering validation, sample approval, or EVT decisions.
 - Re-ranking opportunities after the PM has already curated the Step 1 workbook.
 
-## Controlled Opportunity Vocabulary
+## Controlled PM-Facing Product Action Vocabulary
 
-Use the same opportunity labels across all three steps:
-- `New variant opportunity`
-- `Possible feature gap`
-- `Existing Sunco coverage, but missing feature`
-- `Product Revision or merchandising review`
-- `Strategic outlier / High-output watchlist`
+Use the same product-action labels across all three steps:
+- `NPD` - New Product Development; bring in as a new SKU/product and move toward PRD/RFQ.
+- `Revision` - rolling change, feature add, product update, or merchandising/listing correction on an existing SKU/family.
+- `Concept Review` - enough signal to review more closely before deciding whether the path is NPD, Revision, or no action.
+- `Hold` - do not prioritize from this run; keep the evidence for reference.
 
-Do not introduce one-off labels in Step 2 unless the same label is intentionally supported in Step 1 and Step 3.
+Keep gap reasons separate from product actions. Gap reasons can include feature gap, existing Sunco coverage, partial coverage, strategic outlier, or incumbent optimization, but they should not replace the product-action label.
 
 ## Improvement Checklist
 

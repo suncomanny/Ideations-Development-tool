@@ -95,6 +95,16 @@ CHANNEL_DISPLAY_NAMES = {
 
 SUMMARY_METRIC_GUIDE_ROWS = [
     [
+        "Recommended Product Action",
+        "PM-facing action label: NPD, Revision, Concept Review, or Hold.",
+        "What should the PM do with this SKU/product recommendation next?",
+    ],
+    [
+        "Gap Reason",
+        "Supporting reason behind the action, such as missing feature, existing coverage, or new variant opportunity.",
+        "Why did the tool classify this concept this way?",
+    ],
+    [
         "Outlook",
         "Directional recommendation for the ideation in its current configuration, such as favorable, mixed, or cautious.",
         "Given the category, competitor, pricing, and feature context, should this concept look attractive to pursue as configured?",
@@ -121,6 +131,17 @@ OPPORTUNITY_TYPES = (
     "Existing Sunco coverage, but missing feature",
     "Product Revision or merchandising review",
     "New variant opportunity",
+    "Strategic outlier / High-output watchlist",
+)
+PRODUCT_ACTION_NPD = "NPD"
+PRODUCT_ACTION_REVISION = "Revision"
+PRODUCT_ACTION_CONCEPT_REVIEW = "Concept Review"
+PRODUCT_ACTION_HOLD = "Hold"
+PRODUCT_ACTIONS = (
+    PRODUCT_ACTION_NPD,
+    PRODUCT_ACTION_REVISION,
+    PRODUCT_ACTION_CONCEPT_REVIEW,
+    PRODUCT_ACTION_HOLD,
 )
 EVIDENCE_STRENGTH_STRONG = "Strong support"
 EVIDENCE_STRENGTH_DIRECTIONAL = "Directional support"
@@ -973,6 +994,14 @@ def extract_research_note_evidence(packet: dict[str, Any]) -> dict[str, str]:
     if sunco_match:
         evidence["sunco_coverage"] = clean_fragment(sunco_match.group(1))
 
+    product_action_match = re.search(r"Recommended Product Action:\s*([^\n]+)", notes, flags=re.IGNORECASE)
+    if product_action_match:
+        evidence["product_action"] = clean_fragment(product_action_match.group(1))
+
+    classification_match = re.search(r"Classification:\s*([^\n]+)", notes, flags=re.IGNORECASE)
+    if classification_match and "product_action" not in evidence:
+        evidence["product_action"] = clean_fragment(classification_match.group(1))
+
     recommended_match = re.search(r"Recommended action:\s*([^\n]+)", notes, flags=re.IGNORECASE)
     if recommended_match:
         evidence["recommended_action"] = clean_fragment(recommended_match.group(1))
@@ -1035,7 +1064,7 @@ def product_url_issue(url: Any, source_channel: str | None = None) -> str:
 
 
 def normalize_opportunity_type(value: Any) -> str:
-    """Normalize arbitrary opportunity language into the Step 1-3 shared vocabulary."""
+    """Normalize arbitrary opportunity language into the supporting gap-reason vocabulary."""
     text = normalize_text(value).lower()
     for opportunity_type in OPPORTUNITY_TYPES:
         if opportunity_type.lower() in text:
@@ -1046,13 +1075,54 @@ def normalize_opportunity_type(value: Any) -> str:
         return "Possible feature gap"
     if "revision" in text or "merchandising" in text or "coverage exists" in text:
         return "Product Revision or merchandising review"
+    if "strategic outlier" in text or "watchlist" in text:
+        return "Strategic outlier / High-output watchlist"
     if "variant" in text or "true gap" in text or "new product" in text:
         return "New variant opportunity"
     return ""
 
 
+def normalize_product_action(value: Any) -> str:
+    """Normalize arbitrary language into the PM-facing action vocabulary."""
+    text = normalize_text(value).lower()
+    if not text:
+        return ""
+    if "hold" in text or "do not prioritize" in text or "do not launch" in text:
+        return PRODUCT_ACTION_HOLD
+    if "concept review" in text or "possible feature gap" in text or "strategic outlier" in text or "watchlist" in text or "partial coverage" in text:
+        return PRODUCT_ACTION_CONCEPT_REVIEW
+    if "revision" in text or "merchandising" in text or "existing sunco coverage" in text or "coverage exists" in text or "defend/optimize" in text:
+        return PRODUCT_ACTION_REVISION
+    if "npd" in text or "new product development" in text or "new product" in text or "new variant" in text or "true gap" in text or "amazon stackline opportunity" in text:
+        return PRODUCT_ACTION_NPD
+    return ""
+
+
+def recommended_product_action(packet: dict[str, Any], analysis: dict[str, Any] | None = None) -> str:
+    """Return the approved PM-facing action label for this concept."""
+    if analysis and recommendation_priority(analysis) == "Hold / Do Not Prioritize Yet":
+        return PRODUCT_ACTION_HOLD
+
+    identity = as_dict(packet.get("identity"))
+    target_profile = as_dict(packet.get("target_profile"))
+    evidence = extract_research_note_evidence(packet)
+    context_values = [
+        identity.get("strategy"),
+        identity.get("ideation_name"),
+        target_profile.get("research_notes"),
+        evidence.get("product_action"),
+        evidence.get("recommended_action"),
+        evidence.get("sunco_coverage"),
+    ]
+    for value in context_values:
+        action = normalize_product_action(value)
+        if action:
+            return action
+    return PRODUCT_ACTION_CONCEPT_REVIEW
+
+
 def opportunity_type_for(packet: dict[str, Any], analysis: dict[str, Any] | None = None) -> str:
-    """Return the Step 1-3 shared opportunity type for a row."""
+    """Return the supporting gap reason for a row."""
     identity = as_dict(packet.get("identity"))
     target_profile = as_dict(packet.get("target_profile"))
     research_notes = normalize_text(target_profile.get("research_notes"))
@@ -1251,7 +1321,7 @@ def product_difference_summary(packet: dict[str, Any], analysis: dict[str, Any])
 
 
 def product_fit_classification(packet: dict[str, Any]) -> str:
-    """Return the Step 1-3 shared opportunity type."""
+    """Return the supporting gap reason."""
     return opportunity_type_for(packet)
 
 
@@ -1413,15 +1483,13 @@ def leadership_brief_rows(
     pricing = as_dict(analysis.get("pricing_analysis"))
     normalized_summary = as_dict(normalized.get("summary"))
     amazon_snapshot = gate_snapshot(as_dict(analysis.get("gate_readiness")), "amazon", "G2")
-    decision = "Pursue" if normalize_text(performance.get("launch_outlook")).lower() == "favorable" else "Stage test / refine"
-    if normalize_text(performance.get("launch_outlook")).lower() == "cautious":
-        decision = "Revise before pursuit"
+    action = recommended_product_action(packet, analysis)
 
     return [
-        ("Decision Read", f"{decision} - {normalize_text(action_summary.get('overall_read'))}"),
+        ("Recommended Product Action", action),
         ("Concept Tracking Name", concept_tracking_name(packet)),
         ("Naming Basis", "SKU Decoder product type + Step 2 target specs; tracking name only, not a final SKU."),
-        ("Opportunity Type", product_fit_classification(packet)),
+        ("Gap Reason", product_fit_classification(packet)),
         ("Channel Strategy", channel_strategy(packet, analysis)),
         ("Closest Sunco / NSL Anchor", f"{normalize_text(identity.get('sunco_reference_sku'))} - {normalize_text(reference.get('title'))}"),
         ("Difference vs Current Sunco", product_difference_summary(packet, analysis)),
@@ -1667,14 +1735,14 @@ def pm_decision_snapshot_rows(
     identity = as_dict(packet.get("identity"))
     reference = as_dict(packet.get("reference_baseline"))
     pricing = as_dict(analysis.get("pricing_analysis"))
-    opportunity_type = opportunity_type_for(packet, analysis)
+    product_action = recommended_product_action(packet, analysis)
+    gap_reason = opportunity_type_for(packet, analysis)
     evidence_strength = evidence_strength_for(packet, analysis)
     competitor = primary_competitor_item(normalized)
     competitor_match = match_quality_for_item(competitor)
     competitor_link = source_link_from_item(competitor) if competitor else primary_source_link(packet, normalized)
     evidence = extract_research_note_evidence(packet)
     pricing_link = source_link_cell(evidence.get("review_link"), "Open price source")
-    decision = decision_read_label(analysis)
 
     return [
         [
@@ -1685,17 +1753,17 @@ def pm_decision_snapshot_rows(
             "",
         ],
         [
-            "Opportunity Type",
-            opportunity_type,
+            "Recommended Product Action",
+            product_action,
             evidence_strength,
-            opportunity_type_reason(packet, analysis),
+            first_sentence(action_summary.get("overall_read")) or "Use the controlled action label to decide whether this moves to NPD, Revision, Concept Review, or Hold.",
             "",
         ],
         [
-            "Decision Read",
-            decision,
+            "Gap Reason",
+            gap_reason,
             evidence_strength,
-            first_sentence(action_summary.get("overall_read")),
+            opportunity_type_reason(packet, analysis),
             "",
         ],
         [
@@ -1714,7 +1782,7 @@ def pm_decision_snapshot_rows(
         ],
         [
             "Sunco Gap",
-            opportunity_type,
+            gap_reason,
             evidence_strength,
             evidence.get("sunco_coverage") or product_difference_summary(packet, analysis),
             "",
@@ -2067,15 +2135,15 @@ def risk_watchout_rows(packet: dict[str, Any], analysis: dict[str, Any], action_
     return rows
 
 
-def pm_action_checklist_rows(analysis: dict[str, Any], action_summary: dict[str, Any]) -> list[list[Any]]:
+def pm_action_checklist_rows(packet: dict[str, Any], analysis: dict[str, Any], action_summary: dict[str, Any]) -> list[list[Any]]:
     """Return PM-facing next actions without internal P1/P2/P3 codes."""
-    priority = recommendation_priority(analysis)
+    product_action = recommended_product_action(packet, analysis)
     rows: list[list[Any]] = []
     for action in as_list(action_summary.get("actions")):
         action_row = as_list(action)
         rows.append(
             [
-                priority,
+                product_action,
                 action_row[1] if len(action_row) > 1 else "",
                 action_row[2] if len(action_row) > 2 else "",
                 action_row[3] if len(action_row) > 3 else "",
@@ -2083,7 +2151,7 @@ def pm_action_checklist_rows(analysis: dict[str, Any], action_summary: dict[str,
             ]
         )
     if not rows:
-        rows.append([priority, "No immediate issue surfaced", "Current evidence supports a normal PM review.", "Review the summary and source links before presenting.", "Leadership readiness"])
+        rows.append([product_action, "No immediate issue surfaced", "Current evidence supports a normal PM review.", "Review the summary and source links before presenting.", "Leadership readiness"])
     return rows
 
 
@@ -3117,8 +3185,8 @@ def render_row_sheet(
         ws,
         row,
         "PM Action Checklist",
-        ["Recommendation Priority", "Issue / Reason", "Why It Matters", "Next Action", "Expected Impact"],
-        pm_action_checklist_rows(analysis, action_summary),
+        ["Recommended Product Action", "Issue / Reason", "Why It Matters", "Next Action", "Expected Impact"],
+        pm_action_checklist_rows(packet, analysis, action_summary),
     )
     row = write_table(
         ws,
@@ -3168,7 +3236,8 @@ def render_row_sheet(
         row,
         [
             ("Concept Tracking Name", tracking_name),
-            ("Opportunity Type", product_fit_classification(packet)),
+            ("Recommended Product Action", recommended_product_action(packet, analysis)),
+            ("Gap Reason", product_fit_classification(packet)),
             ("Recommended Channel", channel_strategy_label(packet, analysis)),
             ("Category Owner", identity.get("category_owner")),
             ("Category", identity.get("category")),
@@ -3640,7 +3709,8 @@ def slide_strategy_text(packet: dict[str, Any], analysis: dict[str, Any]) -> str
         "Shopify first; Amazon follow-up if economics support.",
     )
     parts = [
-        f"{concept_tracking_name(packet)} is recommended as a {product_fit_classification(packet).lower()} in {normalize_text(identity.get('subcategory') or identity.get('category'))}.",
+        f"{concept_tracking_name(packet)} is recommended as {recommended_product_action(packet, analysis)} in {normalize_text(identity.get('subcategory') or identity.get('category'))}.",
+        f"Gap reason: {product_fit_classification(packet)}.",
         f"Gap vs current line: {clean_slide_text(product_difference_summary(packet, analysis), 140)}",
     ]
     market = []
@@ -3962,6 +4032,7 @@ def build_slide_index_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[s
                 row_number,
                 concept_tracking_name(packet),
                 slide_title(packet),
+                recommended_product_action(packet, analysis),
                 product_fit_classification(packet),
                 channel_strategy(packet, analysis),
                 as_dict(analysis.get("performance_estimation")).get("launch_outlook"),
@@ -3973,7 +4044,7 @@ def build_slide_index_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[s
         ws,
         3,
         "Slide Summary Sheets",
-        ["Row", "Concept Tracking Name", "Slide Title", "Opportunity Type", "Channel Strategy", "Outlook", "Confidence", "Worksheet"],
+        ["Row", "Concept Tracking Name", "Slide Title", "Recommended Product Action", "Gap Reason", "Channel Strategy", "Outlook", "Confidence", "Worksheet"],
         rows,
     )
 
@@ -4098,6 +4169,7 @@ def build_summary_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[str, 
                 row_number,
                 concept_tracking_name(packet),
                 normalize_text(identity.get("ideation_name")),
+                recommended_product_action(packet, analysis),
                 product_fit_classification(packet),
                 channel_strategy(packet, analysis),
                 as_dict(analysis.get("performance_estimation")).get("launch_outlook"),
@@ -4111,7 +4183,7 @@ def build_summary_sheet(ws, payloads: list[tuple[int, dict[str, Any], dict[str, 
         ws,
         row,
         "Completed Ideation Rows",
-        ["Row", "Concept Tracking Name", "Ideation", "Opportunity Type", "Channel Strategy", "Outlook", "Confidence", "Amazon G2", "Amazon Evidence", "Worksheet"],
+        ["Row", "Concept Tracking Name", "Ideation", "Recommended Product Action", "Gap Reason", "Channel Strategy", "Outlook", "Confidence", "Amazon G2", "Amazon Evidence", "Worksheet"],
         completed_rows,
     )
 

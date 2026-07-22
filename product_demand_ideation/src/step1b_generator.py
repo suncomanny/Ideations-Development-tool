@@ -244,6 +244,11 @@ FEATURE_DISPLAY_NAMES = {
     "smart controls": "Smart Controls",
 }
 
+ACTION_NPD = "NPD"
+ACTION_REVISION = "Revision"
+ACTION_CONCEPT_REVIEW = "Concept Review"
+ACTION_HOLD = "Hold"
+
 
 def _display_feature(value: Any) -> str:
     text = _text(value)
@@ -259,6 +264,10 @@ def _display_features(values: Any) -> list[str]:
 def _recommendation_body(value: Any) -> str:
     text = _text(value)
     for marker in [
+        "NPD:",
+        "Revision:",
+        "Concept Review:",
+        "Hold:",
         "Shopify ecommerce candidate:",
         "Shopify technology gap candidate",
         "Shopify partial-coverage technology gap",
@@ -755,7 +764,8 @@ def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: s
                 "recommendation": recommendation,
                 "priority": priority,
                 "confidence": "High" if weeks >= 8 else "Medium",
-                "classification": "Stackline/Amazon leader" if not is_sunco else "Sunco Amazon incumbent",
+                "classification": ACTION_NPD if not is_sunco else ACTION_REVISION,
+                "gap_reason": "Stackline/Amazon leader" if not is_sunco else "Sunco Amazon incumbent",
                 "evidence": evidence,
                 "sunco_check": (
                     "Sunco already has this Amazon design/pack position; use as defend-and-optimize benchmark."
@@ -803,21 +813,29 @@ def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_r
         coverage = catalog_coverage_analysis(row, catalog_rows, category_slug)
         coverage_score = float(coverage.get("score") or 0)
         missing_features = coverage.get("missing_features") or []
+        display_missing_features = _display_features(missing_features)
         note = coverage.get("note") or ""
         current_note = _text(row.get("sunco_check"))
-        if row.get("classification") == "Sunco Amazon incumbent":
+        if row.get("gap_reason") == "Sunco Amazon incumbent":
+            row["classification"] = ACTION_REVISION
             note = _append_note("Sunco-owned Amazon row: use this as a defend-and-optimize benchmark.", note)
         elif coverage_score >= 75:
+            row["classification"] = ACTION_REVISION
+            row["gap_reason"] = "Existing Amazon/Sunco coverage - optimize or revise"
             note = _append_note(
                 note,
                 "Amazon action: likely optimize listing, pack visibility, image story, pricing, or search placement before creating a new SKU.",
             )
         elif coverage_score >= 50:
+            row["classification"] = ACTION_CONCEPT_REVIEW
+            row["gap_reason"] = "Partial Amazon/Sunco coverage - review before NPD or Revision"
             note = _append_note(
                 note,
                 "Amazon action: treat as listing-depth or variant/spec-gap candidate based on the Sunco coverage note.",
             )
         else:
+            row["classification"] = ACTION_NPD
+            row["gap_reason"] = "Amazon assortment gap"
             note = _append_note(
                 note,
                 "Amazon action: likely launch/assortment candidate where Sunco active-catalog coverage shows no equivalent offer.",
@@ -834,6 +852,7 @@ def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_r
             row["sunco_check"] = note
         row["_sunco_catalog_coverage_score"] = coverage_score
         row["_technology_gap_features"] = missing_features
+        _set_recommendation_label(row, row["classification"], display_missing_features if row["classification"] == ACTION_CONCEPT_REVIEW and display_missing_features else None)
 
 
 def _apply_product_demand_overlay(
@@ -865,10 +884,11 @@ def _apply_product_demand_overlay(
             row["_sunco_catalog_coverage_score"] = coverage_score
             row["_technology_gap_features"] = missing_features
             if row.get("_strategic_outlier"):
-                row["classification"] = "Strategic outlier / High-output watchlist"
+                row["classification"] = ACTION_CONCEPT_REVIEW
+                row["gap_reason"] = "Strategic outlier / High-output watchlist"
                 row["priority"] = "Medium"
                 row["confidence"] = "Directional"
-                _set_recommendation_label(row, "Strategic outlier / High-output watchlist")
+                _set_recommendation_label(row, ACTION_CONCEPT_REVIEW)
                 row["sunco_check"] = _append_note(
                     note,
                     (
@@ -881,38 +901,42 @@ def _apply_product_demand_overlay(
                     "certifications, vendor feasibility, and whether demand is broader than one competitor PDP before PRD/RFQ."
                 )
             elif coverage_score >= 75 and missing_features:
-                row["classification"] = "Existing Sunco coverage, but missing feature"
-                _set_recommendation_label(row, "Existing Sunco coverage, but missing feature", display_missing_features)
+                row["classification"] = ACTION_REVISION
+                row["gap_reason"] = "Existing Sunco coverage, but missing feature"
+                _set_recommendation_label(row, ACTION_REVISION, display_missing_features)
                 row["pm_action"] = (
-                    f"Position {', '.join(display_missing_features)} as a feature opportunity on the matched active Sunco family. "
-                    "Use as an add-variant, running-change, or PDP merchandising callout path rather than a base SKU duplicate."
+                    f"Treat {', '.join(display_missing_features)} as a Revision candidate on the matched active Sunco family. "
+                    "Use as a rolling change, feature add, or PDP merchandising callout path rather than a new part number by default."
                 )
             elif coverage_score >= 75:
-                row["classification"] = "Product Revision or merchandising review"
+                row["classification"] = ACTION_REVISION
+                row["gap_reason"] = "Product Revision or merchandising review"
                 row["priority"] = "Medium"
                 row["confidence"] = "Coverage exists"
-                _set_recommendation_label(row, "Product Revision or merchandising review")
+                _set_recommendation_label(row, ACTION_REVISION)
                 row["pm_action"] = (
-                    "Prioritize PDP/category merchandising or product revision on the matched active SKU. "
-                    "Use the competitor demand signal to improve title/spec coverage, pack-size visibility, price position, search/category placement, or running-change planning."
+                    "Treat as a Revision candidate on the matched active SKU. "
+                    "Use the competitor demand signal to improve title/spec coverage, price position, search/category placement, or running-change planning."
                 )
             elif coverage_score >= 50:
+                row["classification"] = ACTION_CONCEPT_REVIEW
                 if missing_features:
-                    row["classification"] = "Possible feature gap"
-                    _set_recommendation_label(row, "Possible feature gap", display_missing_features)
+                    row["gap_reason"] = "Possible feature gap"
+                    _set_recommendation_label(row, ACTION_CONCEPT_REVIEW, display_missing_features)
                 else:
-                    row["classification"] = "New variant opportunity"
-                    _set_recommendation_label(row, "New variant opportunity")
+                    row["gap_reason"] = "Partial coverage variant review"
+                    _set_recommendation_label(row, ACTION_CONCEPT_REVIEW)
                 row["pm_action"] = (
-                    "Scope the missing variant or feature depth shown by this row. "
-                    "Route PDP/pack visibility findings to merchandising instead of new SKU setup."
+                    "Review the missing variant or feature depth before deciding whether this should become NPD or Revision. "
+                    "Use PM judgment and source links to choose the correct path."
                 )
             else:
-                row["classification"] = "New variant opportunity"
-                _set_recommendation_label(row, "New variant opportunity")
+                row["classification"] = ACTION_NPD
+                row["gap_reason"] = "New variant opportunity"
+                _set_recommendation_label(row, ACTION_NPD)
                 row["pm_action"] = (
-                    "Scope as a new variant around this normalized spec pattern. "
-                    "Use the coverage result and demand evidence in this row as the launch rationale."
+                    "Treat as an NPD candidate around this normalized spec pattern. "
+                    "Use the coverage result and demand evidence in this row as the launch rationale for PRD/RFQ."
                 )
         output["source_rows"] = ecommerce_source_rows
         output["source_exact_count"] = len(ecommerce_source_rows)

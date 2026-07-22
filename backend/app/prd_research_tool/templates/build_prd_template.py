@@ -181,7 +181,7 @@ columns = [
     ("C", "Ideation Name *", True),
     ("D", "Sunco Reference SKU *", True),
     ("E", "Reference SKU Source", False),
-    ("F", "Strategy *", True),
+    ("F", "Recommended Product Action *", True),
     # CORE ELECTRICAL SPECS
     ("G", "Voltage", False),
     ("H", "Wattage (Primary)", False),
@@ -310,7 +310,7 @@ for row_num in range(3, 103):
 validations = {
     "A": "Accessory,Bulbs,Electrical,Grow Lights,High Bays + Low Bays,Indoor Commercial,Indoor Residential,Industrial,Outdoor Commercial,Outdoor Fixtures,Recessed,Tubes",
     "B": "A series,Accessory,Area Lights,B11 series,Bathroom Fans,BR series,Bulbs,Canless,Canopy,Cans,Ceiling Fixtures,Dimmers,Disk,Emergency,Flood Lights,G series,Lamps,Linears,MR series,Panels,PAR series,Pendants,Receptacles,Recessed,Residential,Residential Landscape,Retrofit,Retrofit Kits,S series,Safety,Sensors,Shop Lights,Smart Lights,ST series,Strip Lights,Tubes,UFO,Under Cabinet,Vanity,Vapor Tights,Wall Packs,Wall Sconces,Wire,Wraparounds",
-    "F": "New Product,Revision,Cost Reduction,Vendor Transition",
+    "F": "NPD,Revision,Concept Review,Hold",
     "G": "12V,24V,120V,120-277V,120-347V,200-480V,277-480V,Low Voltage,Other",
     "J": "Yes,No",
     "M": "Yes,No",
@@ -362,7 +362,7 @@ example = {
     "C": "2x4 Panel Selectable 50W",
     "D": "PN24-2x4-30W-1PK",
     "E": "Existing Catalog",
-    "F": "New Product",
+    "F": "NPD",
     "G": "120-277V",
     "H": "50",
     "I": "60",

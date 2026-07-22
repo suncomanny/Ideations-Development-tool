@@ -201,6 +201,8 @@ def build_column_specs(
         header_key = normalize_header(header_value)
         if not header_key:
             continue
+        if header_key == "recommended_product_action":
+            header_key = "strategy"
 
         specs.append(
             {

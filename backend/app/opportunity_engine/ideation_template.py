@@ -107,6 +107,11 @@ SOURCE_MAPPING_HEADERS = [
     "URL status",
 ]
 
+ACTION_NPD = "NPD"
+ACTION_REVISION = "Revision"
+ACTION_CONCEPT_REVIEW = "Concept Review"
+ACTION_HOLD = "Hold"
+
 
 def _clean_prd_requirement_text(key: str, value: Any) -> Any:
     if key not in PRD_SPEC_COLUMNS or not isinstance(value, str):
@@ -269,6 +274,14 @@ def _record_has_values(record: dict[str, Any]) -> bool:
 def _classification_from_recommendation(value: Any, fallback: str) -> str:
     text = _cell_text(value)
     lowered = text.lower()
+    for label in [
+        ACTION_NPD,
+        ACTION_REVISION,
+        ACTION_CONCEPT_REVIEW,
+        ACTION_HOLD,
+    ]:
+        if lowered.startswith(label.lower()) or f"{label.lower()}:" in lowered:
+            return label
     for label in [
         "Existing Sunco coverage, but missing feature",
         "Product Revision or merchandising review",
@@ -687,13 +700,49 @@ def _sunco_reference_from_coverage(item: dict[str, Any]) -> dict[str, str] | Non
 
 def _strategy_from_classification(value: str | None) -> str:
     text = (value or "").lower()
-    if "strategic outlier" in text or "watchlist" in text:
-        return "Strategic Watchlist"
-    if "style" in text:
-        return "Style Extension"
-    if "feature" in text or "variant" in text:
-        return "Feature Expansion"
-    return "New Product"
+    if "hold" in text:
+        return ACTION_HOLD
+    if "concept review" in text or "strategic outlier" in text or "watchlist" in text or "possible feature gap" in text:
+        return ACTION_CONCEPT_REVIEW
+    if "revision" in text or "merchandising" in text or "existing sunco coverage" in text or "coverage exists" in text or "defend/optimize" in text or "sunco amazon incumbent" in text:
+        return ACTION_REVISION
+    if "npd" in text or "new product" in text or "new variant" in text or "true gap" in text or "amazon stackline opportunity" in text or "stackline/amazon leader" in text or "stackline amazon leader" in text:
+        return ACTION_NPD
+    return ACTION_CONCEPT_REVIEW
+
+
+def _strip_action_prefix(value: Any) -> str:
+    text = _cell_text(value)
+    if not text:
+        return ""
+    prefixes = [
+        ACTION_NPD,
+        ACTION_REVISION,
+        ACTION_CONCEPT_REVIEW,
+        ACTION_HOLD,
+        "Existing Sunco coverage, but missing feature",
+        "Product Revision or merchandising review",
+        "Strategic outlier / High-output watchlist",
+        "Strategic outlier watchlist",
+        "Possible feature gap",
+        "New variant opportunity",
+        "Amazon Stackline opportunity",
+        "Stackline/Amazon leader",
+        "Defend/optimize Sunco Amazon winner",
+    ]
+    for prefix in prefixes:
+        pattern = rf"^\s*{re.escape(prefix)}(?:\s*\([^)]*\))?\s*:\s*"
+        cleaned = re.sub(pattern, "", text, count=1, flags=re.IGNORECASE).strip()
+        if cleaned != text:
+            return cleaned
+    return text
+
+
+def _ideation_name_with_action(item: dict[str, Any], strategy: str) -> str:
+    body = _strip_action_prefix(item.get("name"))
+    if body:
+        return f"{strategy}: {body}"
+    return strategy
 
 
 def _evidence_text(item: dict[str, Any]) -> str:
@@ -1250,7 +1299,7 @@ def _build_research_notes(
 ) -> str:
     notes = [
         f"Source: {item.get('source')}",
-        f"Classification: {item.get('classification')}",
+        f"Recommended Product Action: {enriched.get('strategy') or item.get('classification')}",
         f"Demand summary: {enriched.get('stackline_data')}" if enriched.get("stackline_data") else None,
         f"Priority channel rationale: {enriched.get('priority_channels')}" if enriched.get("priority_channels") else None,
         f"Parent opportunity: {item.get('_parent_opportunity')}" if item.get("_parent_opportunity") else None,
@@ -1305,13 +1354,14 @@ def _enrich_item(
     metrics = _extract_demand_metrics(item)
     pricing = _market_msrp_target(item, market_samples) or _market_msrp_target_from_step1(item)
     link_validation = format_validation_notes(validate_urls(extract_urls(item.get("url")), url_validation_cache))
+    strategy = _strategy_from_classification(item.get("classification") or item.get("name"))
     enriched = {
         "category": category.run_name,
         "subcategory": defaults.get("subcategory") or category.run_name,
-        "ideation_name": str(item.get("name") or "").strip(),
+        "ideation_name": _ideation_name_with_action(item, strategy),
         "sunco_reference_sku": "TBD - use best-selling adjacent Sunco family by category revenue",
         "reference_sku_source": f"No exact Sunco {category.run_name} SKU identified from Step 1 evidence; use revenue proxy during refresh",
-        "strategy": _strategy_from_classification(item.get("classification")),
+        "strategy": strategy,
         "known_competitors": _build_known_competitors(item),
     }
     enriched.update(defaults)
@@ -1436,6 +1486,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
     ws = workbook["Ideations"]
     ws["B1"] = category.owner
     ws["E1"] = f"Prepared from {selected_gap.name} on {timestamp()}"
+    ws.cell(3, COLUMN_MAP["strategy"]).value = "Recommended Product Action *"
     rows, intake_audit = _read_gap_rows_with_audit(selected_gap)
     candidate_rows: list[dict[str, Any]] = []
     for item in rows:
@@ -1464,7 +1515,8 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             mapping.append([
                 enriched.get("ideation_name") or item.get("name"),
                 (
-                    f"{item.get('classification')} from PM-kept Step 1 row"
+                    f"Recommended Product Action: {enriched.get('strategy') or item.get('classification')}"
+                    f"; supporting gap reason {item.get('classification') or 'not specified'}"
                     f"; priority {item.get('priority') or 'not specified'}"
                     f"; confidence {item.get('confidence') or 'not specified'}"
                     + (
@@ -1507,6 +1559,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             ("SKU expansion rule", "Step 2 creates one row per candidate SKU when Step 1 evidence or PM action names distinct SKU-level options such as light count, form factor, output tier, finish, mounting, or size. It does not force a minimum row count."),
             ("Pack-size rule", "Pack-size and pack-count recommendations are intentionally excluded from Step 2. Use the separate pack-size recommendation workflow for pack-count decisions."),
             ("Selection rule", "PM row deletion is the gate. Step 2 converts remaining usable Step 1 rows, preserving Priority and Confidence as context instead of using them as hard filters."),
+            ("Recommended Product Action rule", "Step 2 uses the controlled PM-facing action vocabulary: NPD, Revision, Concept Review, Hold."),
             ("Reference SKU rule", "Sunco.com/Shopify coverage first, canonicalized against the Existing SKU Line Review; if absent, use best-selling item by category revenue."),
             ("MSRP target rule", "When market price samples exist, Target MSRP is based on the 50th-55th percentile of comparable listings and is independent from margin targets."),
             ("URL status rule", "Step 2 checks Step 1 review URLs live when the workbook is generated. 2xx/3xx means verified; 403/429 means blocked by retailer/CDN and needs manual browser review; 404/410 means invalid and should be replaced."),
