@@ -1,6 +1,23 @@
 {
   "panels": {
     "notes": "Defaults used for integrated LED panel and troffer concepts when Step 1 evidence does not provide a stronger SKU-specific value.",
+    "attribute_mode": "integrated_led_fixture",
+    "form_factor_terms": [
+      "panel",
+      "flat panel",
+      "surface mount panel",
+      "grid frame panel",
+      "troffer",
+      "center basket"
+    ],
+    "sku_split_attributes": [
+      "panel_size",
+      "output_tier",
+      "wattage",
+      "mounting_type",
+      "control_type"
+    ],
+    "max_sku_candidates_per_row": 4,
     "defaults": {
       "subcategory": "Panels",
       "voltage": "120-277V target",
@@ -39,6 +56,8 @@
   },
   "decorative_fixture": {
     "notes": "Defaults used only when the Step 1 evidence does not provide a stronger value. These are intended as research starting points, not locked PRD specs.",
+    "attribute_mode": "decorative_fixture",
+    "sku_split_attributes": [],
     "defaults": {
       "voltage": "120V",
       "selectable_wattage": "No",
@@ -73,6 +92,7 @@
   },
   "chandeliers": {
     "inherits": "decorative_fixture",
+    "attribute_mode": "decorative_fixture",
     "keywords": [
       "chandelier",
       "wagon wheel",
@@ -81,6 +101,11 @@
       "dining room",
       "farmhouse"
     ],
+    "sku_split_attributes": [
+      "light_count",
+      "fixture_size"
+    ],
+    "max_sku_candidates_per_row": 4,
     "defaults": {
       "subcategory": "Chandeliers",
       "bulb_shape": "LED filament bulbs optional",
@@ -91,6 +116,19 @@
   },
   "under_cabinet": {
     "notes": "Defaults used for under-cabinet task-lighting concepts when Step 1 evidence does not provide a stronger SKU-specific value.",
+    "attribute_mode": "under_cabinet_task_lighting",
+    "form_factor_terms": [
+      "under cabinet bar",
+      "puck",
+      "tape light",
+      "strip light"
+    ],
+    "sku_split_attributes": [
+      "linear_size",
+      "mounting_type",
+      "control_type"
+    ],
+    "max_sku_candidates_per_row": 4,
     "defaults": {
       "subcategory": "Under cabinet",
       "voltage": "Battery rechargeable or 120V plug-in/hardwire by kit type",
@@ -114,7 +152,7 @@
       "bulb_base_type": null,
       "bulb_shape": null,
       "beam_angle": "Wide task-light distribution",
-      "target_msrp": "Competitor median by pack count and kit type",
+      "target_msrp": "Competitor median by kit type and comparable market tier",
       "target_margin_shopify": "60% target",
       "target_margin_amazon": "70% target",
       "cost_type": "Landed",

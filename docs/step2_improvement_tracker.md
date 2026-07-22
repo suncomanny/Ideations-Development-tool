@@ -1,7 +1,7 @@
 # Step 2 Improvement Tracker
 
-Last updated: 2026-07-21
-Branch: `codex/step3-workbook-cleanup`
+Last updated: 2026-07-22
+Branch: `codex/step2-sku-normalizer`
 
 ## Core Purpose
 
@@ -87,7 +87,7 @@ Acceptance criteria:
 
 ### 3. SKU-Level Candidate Normalization
 
-Status: Pending
+Status: First pass implemented - validated with synthetic Panels smoke test
 
 Goal:
 Each Step 2 row should represent one candidate SKU concept at the level Step 3 will research.
@@ -106,12 +106,15 @@ Acceptance criteria:
 Implementation notes:
 - Pack-size and pack-count splitting was removed from Step 2.
 - Under Cabinet no longer generates separate rows for pack-count mentions.
-- Remaining SKU-level splitting is still limited mainly to chandelier light count / size logic and should be reviewed in a later pass for category-agnostic output tier, finish, mounting, and form-factor splits.
+- SKU candidate generation is now centralized in `_step2_candidate_rows`.
+- Default behavior remains one PM-kept Step 1 row to one Step 2 SKU concept row.
+- Step 2 now splits only when the selected category profile allows the SKU-defining attribute and Step 1 evidence or PM action explicitly names multiple options.
+- Panels profile rules now allow explicit size, output-tier, wattage, mounting, and control-type splits without enabling decorative/chandelier assumptions.
 - Panels validation confirmed wattage and lumen requirement cells now output clean values such as `210W` and `33,600lm` instead of internal wording like `target from Step 1 evidence`.
 
 ### 4. Category-Safe Attribute Extraction
 
-Status: Partially implemented - validated with Panels and Wraparounds smoke tests
+Status: First pass implemented - validated with Panels/Wraparounds historical smoke tests and synthetic Panels SKU-normalizer smoke test
 
 Goal:
 Step 2 should extract specs using category-aware logic without category bleed.
@@ -127,6 +130,12 @@ Acceptance criteria:
 - Panels do not receive chandelier/bulb-dependent assumptions.
 - Integrated LED fixture categories do not get socket/bulb guidance unless Step 1 explicitly supports it.
 - Category profiles improve the row without overriding direct evidence.
+
+Implementation notes:
+- Attribute mode is now read from the selected category profile where defined.
+- Form-factor inference honors `form_factor_terms` from the selected category profile before applying generic integrated LED fallbacks.
+- Decorative fixture enrichment no longer writes `Bulb-dependent` into PRD-facing spec cells.
+- Step 2 no longer falls back to the old `schema_references` ideation template when the maintained template is missing.
 
 ### 5. Source Link and Evidence Preservation
 
@@ -234,6 +243,14 @@ Validated on 2026-07-21 after Sunco Reference SKU fix:
   - `PN_SM2x2-40W-0K-1PK` maps to `PN_SM2X2-40W-0K`
   - `PN_SM2x4-50W-0K-10PK` maps to `PN_SM2X4-50W-0K`
   - `ULI-HG-GRUL-BBW2X4-YYA-4PK` maps to `ULI-HG-GRUL-BBW2X4-YYA`
+
+Validated on 2026-07-22 for Step 2 SKU normalizer first pass:
+- Compile check passed: `python -m compileall backend\app product_demand_ideation\src backend\maintenance_scripts\smoke_step2_sku_normalizer.py`
+- Synthetic Panels Step 1 smoke workbook: `backend\cache\smoke_tests\step2_sku_normalizer\panels_step1_smoke_2026-07-21_192236.xlsx`
+- Synthetic Panels Step 2 output: `outputs\Ideations\PRD Ideation Workbooks\panels\panels_prd_ideations_2026-07-21_192236.xlsx`
+- Synthetic Panels result: one explicit two-size/two-output NPD opportunity became two SKU concept rows, and one Revision opportunity stayed one Revision row.
+- Smoke assertions passed for action sort order, 2x2/3,200lm and 2x4/5,000lm row targets, Revision SKU/change notes, and banned wording scan for `schema_references`, `templates/Competitors.md`, `Bulb-dependent`, `chandelier`, `pack-count target`, and `_target_pack_count`.
+- Excel COM validation could not complete in the sandbox: `A specified logon session does not exist. It may already have been terminated.`
 
 ## Validation Plan
 
