@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .categories import Category, load_categories
+from .build_category_intelligence import build_category_intelligence_database
 from .paths import ProjectPaths
 from .refresh_line_review_snapshots import refresh_line_review_snapshots
 from .refresh_redshift_stackline_cache import refresh_redshift_stackline_caches
@@ -60,6 +61,7 @@ def main() -> None:
         "categories": [category.slug for category in categories],
         "line_review": None,
         "stackline": None,
+        "category_intelligence": None,
     }
 
     if not args.skip_line_review:
@@ -80,6 +82,9 @@ def main() -> None:
             force=args.force_stackline,
             dry_run=args.dry_run,
         )
+
+    print("\nRebuilding category intelligence database and generated category profiles...")
+    manifest["category_intelligence"] = build_category_intelligence_database(paths)
 
     target = write_manifest(paths, manifest)
     print(f"\nBackend refresh manifest:\n{target}")

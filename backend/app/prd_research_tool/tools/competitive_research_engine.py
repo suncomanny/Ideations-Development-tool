@@ -75,6 +75,13 @@ CHANNEL_ORDER = [
 FEATURE_SIGNAL_PROFILE_PATH = (
     Path(__file__).resolve().parents[1] / "config" / "category_feature_signal_profiles.json"
 )
+GENERATED_FEATURE_SIGNAL_PROFILE_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "backend"
+    / "source_data"
+    / "category_intelligence"
+    / "generated_category_feature_signal_profiles.json"
+)
 
 CHANNEL_LABELS = {
     "amazon": "Amazon",
@@ -222,9 +229,19 @@ def label_key(value: Any) -> str:
 
 def load_category_feature_signal_profiles() -> dict[str, Any]:
     """Load the backend category feature-signal database."""
-    if not FEATURE_SIGNAL_PROFILE_PATH.exists():
-        return {"profiles": []}
-    return json.loads(FEATURE_SIGNAL_PROFILE_PATH.read_text(encoding="utf-8"))
+    payload = {"profiles": []}
+    if FEATURE_SIGNAL_PROFILE_PATH.exists():
+        payload = json.loads(FEATURE_SIGNAL_PROFILE_PATH.read_text(encoding="utf-8"))
+    profiles = list(payload.get("profiles") or [])
+    if GENERATED_FEATURE_SIGNAL_PROFILE_PATH.exists():
+        generated = json.loads(GENERATED_FEATURE_SIGNAL_PROFILE_PATH.read_text(encoding="utf-8"))
+        seen = {profile.get("id") for profile in profiles if isinstance(profile, dict)}
+        for profile in generated.get("profiles") or []:
+            if isinstance(profile, dict) and profile.get("id") not in seen:
+                profiles.append(profile)
+                seen.add(profile.get("id"))
+    payload["profiles"] = profiles
+    return payload
 
 
 def nested_value(source: dict[str, Any], path: str) -> Any:
@@ -624,7 +641,10 @@ def dynamic_feature_labels(ideation: dict[str, Any]) -> list[str]:
         "material_keywords": profile.get("material_keywords") or {},
         "mounting_keywords": profile.get("mounting_keywords") or {},
         "power_keywords": profile.get("power_keywords") or {},
+        "control_keywords": profile.get("control_keywords") or {},
+        "emergency_keywords": profile.get("emergency_keywords") or {},
         "color_mode_keywords": profile.get("color_mode_keywords") or {},
+        "certification_keywords": profile.get("certification_keywords") or {},
     }
 
     for field in profile.get("feature_fields") or []:
