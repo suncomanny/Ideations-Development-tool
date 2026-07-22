@@ -77,6 +77,66 @@ PROFILE_SIGNAL_FIELDS = {
 }
 
 INCLUDE_LEGACY_GAP_EVIDENCE_ENV = "OPPORTUNITY_ENGINE_INCLUDE_LEGACY_GAP_EVIDENCE"
+GENERATED_FEATURE_PROFILE_FILENAME = "generated_category_feature_signal_profiles.json"
+GENERATED_ATTRIBUTE_DECISION_PROFILE_FILENAME = "generated_category_attribute_decision_profiles.json"
+
+NOISE_ATTRIBUTE_NAMES = {
+    "brand",
+    "components",
+    "dimensions",
+    "efficacy",
+    "lifetime",
+    "model_number",
+    "product_type",
+    "warranty",
+}
+
+PLACEHOLDER_VALUES = {
+    "",
+    "0",
+    "na",
+    "n/a",
+    "none",
+    "not applicable",
+    "null",
+}
+
+ATTRIBUTE_GROUPS = {
+    "base_type": "Physical / Compatibility",
+    "beam_angle": "Performance Configuration",
+    "bulb_base": "Physical / Compatibility",
+    "certifications": "Ratings / Certifications",
+    "color_temp": "CCT Strategy",
+    "cct": "CCT Strategy",
+    "cri": "Performance Configuration",
+    "daylight_sensor_auto_dimming": "Controls",
+    "dimmable": "Controls",
+    "dimming_details": "Controls",
+    "finish": "Physical / Compatibility",
+    "ic_rated": "Ratings / Certifications",
+    "ip_rating": "Ratings / Certifications",
+    "linkable": "Installation / Linking",
+    "lumens": "Performance Configuration",
+    "material": "Physical / Compatibility",
+    "moisture_rating": "Ratings / Certifications",
+    "motion_sensor": "Controls",
+    "mount_type": "Installation / Linking",
+    "power_type": "Installation / Linking",
+    "sensor_details": "Controls",
+    "usage": "Ratings / Certifications",
+    "voltage": "Performance Configuration",
+    "wattage": "Performance Configuration",
+    "wiring_type": "Installation / Linking",
+}
+
+GROUP_TYPES = {
+    "CCT Strategy": "Feature",
+    "Controls": "Feature",
+    "Installation / Linking": "Feature",
+    "Performance Configuration": "Feature",
+    "Physical / Compatibility": "Feature",
+    "Ratings / Certifications": "Mixed",
+}
 
 
 def utc_now() -> str:
@@ -433,6 +493,551 @@ def insert_feature_profiles(
                 ),
             )
             count += 1
+    return count
+
+
+def clean_generated_profile_value(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text
+
+
+def generated_value_is_usable(attribute: str, value: Any) -> bool:
+    attribute_key = slugify(attribute).replace("-", "_")
+    if attribute_key in NOISE_ATTRIBUTE_NAMES:
+        return False
+    text = clean_generated_profile_value(value)
+    if text.lower() in PLACEHOLDER_VALUES:
+        return False
+    if text.lower().startswith(("see specification", "refer to specification")):
+        return False
+    return True
+
+
+def split_generated_profile_values(attribute: str, value: Any) -> list[str]:
+    text = clean_generated_profile_value(value)
+    if not generated_value_is_usable(attribute, text):
+        return []
+    attribute_key = slugify(attribute).replace("-", "_")
+    if attribute_key in {"certifications", "color_temp", "cct"}:
+        parts = [part.strip() for part in re.split(r",|;", text) if part.strip()]
+        return parts or [text]
+    return [text]
+
+
+def normalize_generated_label(attribute: str, value: Any) -> str | None:
+    attribute_key = slugify(attribute).replace("-", "_")
+    text = clean_generated_profile_value(value)
+    lowered = text.lower()
+    if not generated_value_is_usable(attribute_key, text):
+        return None
+
+    if attribute_key == "certifications":
+        cert_patterns = [
+            ("cETLus", r"\bc\s*etlus\b|\bcetlus\b"),
+            ("cULus", r"\bc\s*ulus\b|\bculus\b"),
+            ("Energy Star", r"\benergy\s+star\b"),
+            ("ETL", r"\betl\b"),
+            ("UL", r"\bul\b"),
+            ("DLC Premium", r"\bdlc\s+premium\b"),
+            ("DLC", r"\bdlc\b"),
+            ("FCC", r"\bfcc\b"),
+            ("RoHS", r"\brohs\b"),
+        ]
+        for label, pattern in cert_patterns:
+            if re.search(pattern, lowered, flags=re.IGNORECASE):
+                return label
+        return text
+    if attribute_key in {"color_temp", "cct"}:
+        ccts = re.findall(r"\b\d{4}\s*K\b", text, flags=re.IGNORECASE)
+        if len(ccts) >= 5:
+            return "5CCT selectable"
+        if len(ccts) >= 3:
+            return "3CCT selectable"
+        if "select" in lowered:
+            return "Selectable CCT"
+        if ccts:
+            return ccts[0].upper().replace(" ", "")
+        return text
+    if attribute_key in {"dimming_details", "dimming"}:
+        if "0-10" in lowered or "0 10" in lowered:
+            return "0-10V dimming"
+        if "triac" in lowered:
+            return "TRIAC dimming"
+        if "dimm" in lowered:
+            return "Dimmable"
+        return text
+    if attribute_key == "dimmable":
+        if "non" in lowered or lowered in {"no", "false"}:
+            return "Non-dimmable"
+        if "dimm" in lowered or lowered in {"yes", "true"}:
+            return "Dimmable"
+        return text
+    if attribute_key == "moisture_rating":
+        if "wet" in lowered:
+            return "Wet rated"
+        if "damp" in lowered:
+            return "Damp rated"
+        if "dry" in lowered:
+            return "Dry rated"
+        return text
+    if attribute_key == "ip_rating":
+        return text.upper().replace(" ", "")
+    if attribute_key in {"mount_type", "mounting"}:
+        if "wall" in lowered:
+            return "Wall mount"
+        if "ceiling" in lowered:
+            return "Ceiling mount"
+        if "hang" in lowered or "suspend" in lowered:
+            return "Hanging mount"
+        if "recess" in lowered:
+            return "Recessed mount"
+        if "surface" in lowered:
+            return "Surface mount"
+        return text
+    if attribute_key in {"power_type", "wiring_type"}:
+        if "hardwire" in lowered:
+            return "Hardwired"
+        if "plug" in lowered:
+            return "Plug-in"
+        if "battery" in lowered:
+            return "Battery powered"
+        return text
+    if attribute_key == "linkable":
+        if lowered in PLACEHOLDER_VALUES or lowered in {"no", "false"}:
+            return None
+        return "Linkable / daisy-chain"
+    if attribute_key == "motion_sensor":
+        if lowered in {"yes", "true", "included"} or "motion" in lowered:
+            return "Motion sensor"
+        return None
+    if attribute_key == "daylight_sensor_auto_dimming":
+        if lowered in {"yes", "true", "included"} or "daylight" in lowered:
+            return "Daylight sensor / auto-dimming"
+        return None
+    if attribute_key == "beam_angle":
+        number = re.search(r"\d+(?:\.\d+)?", text)
+        return f"{number.group(0)} degree beam angle" if number else text
+    if attribute_key == "voltage":
+        voltage_match = re.search(r"\b\d{2,3}\s*-\s*\d{2,3}\s*V?\b|\b\d{2,3}\s*V\b", text, flags=re.IGNORECASE)
+        voltage = (voltage_match.group(0) if voltage_match else text).upper().replace(" ", "")
+        if re.search(r"\d", voltage) and "V" not in voltage:
+            voltage = f"{voltage}V"
+        return voltage
+    if attribute_key == "wattage":
+        wattage = text.upper().replace(" ", "")
+        if re.search(r"\d", wattage) and "W" not in wattage:
+            wattage = f"{wattage}W"
+        return wattage
+    if attribute_key == "lumens":
+        lumens = text.upper().replace(" ", "")
+        if re.search(r"\d", lumens) and "LM" not in lumens and "LUMEN" not in lumens:
+            lumens = f"{lumens}LM"
+        return lumens
+    if attribute_key == "cri":
+        number = re.search(r"\d{2,3}", text)
+        return f"CRI {number.group(0)}+" if number else text
+    if attribute_key in {"bulb_base", "base_type", "socket_base"}:
+        base = re.search(r"\bE(?:12|17|26|39)\b", text, flags=re.IGNORECASE)
+        return f"{base.group(0).upper()} socket" if base else text
+    if attribute_key == "finish":
+        return text if "finish" in lowered else f"{text} finish"
+    return text
+
+
+def generated_match_terms(attribute: str, raw_value: Any, label: str) -> list[str]:
+    terms = [label, clean_generated_profile_value(raw_value)]
+    attribute_key = slugify(attribute).replace("-", "_")
+    if attribute_key:
+        terms.append(attribute_key.replace("_", " "))
+    if label.endswith(" selectable"):
+        terms.append(label.replace(" selectable", ""))
+    return sorted({term for term in terms if term})
+
+
+def generated_attribute_recommendation(group: str, label: str) -> str:
+    if group == "CCT Strategy":
+        return f"Keep {label} in scope when direct competitors show it as a repeated buying filter."
+    if group == "Controls":
+        return f"Include {label} when the comparable set or channel use case supports the added controls complexity."
+    if group == "Installation / Linking":
+        return f"Treat {label} as an RFQ compatibility requirement when it matches the intended install path."
+    if group == "Ratings / Certifications":
+        return f"Request {label} support when the target channel or installation environment requires it."
+    if group == "Performance Configuration":
+        return f"Use {label} when it supports the target performance tier without weakening price or margin."
+    return f"Use {label} when it is part of the target SKU positioning and competitor evidence supports it."
+
+
+def generated_profile_candidates(connection: sqlite3.Connection, category_id: int) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    rows = connection.execute(
+        """
+        SELECT attribute_name, attribute_value, occurrence_count, product_count, coverage_pct, signal_class, source
+        FROM category_attribute_distribution
+        WHERE category_id = ?
+        ORDER BY occurrence_count DESC, coverage_pct DESC, attribute_name, attribute_value
+        """,
+        (category_id,),
+    ).fetchall()
+    for attribute, raw_value, occurrence_count, product_count, coverage_pct, signal_class, source in rows:
+        if "category_attribute_profiles.json" in str(source or "").replace("\\", "/"):
+            continue
+        attribute_key = slugify(attribute).replace("-", "_")
+        group = ATTRIBUTE_GROUPS.get(attribute_key)
+        if not group:
+            continue
+        for value in split_generated_profile_values(attribute_key, raw_value):
+            label = normalize_generated_label(attribute_key, value)
+            if not label:
+                continue
+            if label.lower() in {"non-dimmable"}:
+                continue
+            marker = (group, label.lower(), attribute_key)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            candidates.append(
+                {
+                    "attribute": attribute_key,
+                    "raw_value": value,
+                    "label": label,
+                    "group": group,
+                    "occurrence_count": int(occurrence_count or 0),
+                    "product_count": int(product_count or 0),
+                    "coverage_pct": float(coverage_pct or 0),
+                    "signal_class": signal_class or "",
+                }
+            )
+    return candidates
+
+
+def generated_keyword_maps(candidates: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    maps = {
+        "style_keywords": {},
+        "finish_keywords": {},
+        "material_keywords": {},
+        "mounting_keywords": {},
+        "power_keywords": {},
+        "control_keywords": {},
+        "emergency_keywords": {},
+        "color_mode_keywords": {},
+        "certification_keywords": {},
+    }
+    for item in candidates:
+        label = str(item["label"])
+        attribute = str(item["attribute"])
+        raw_value = str(item["raw_value"])
+        target_map = None
+        if item["group"] == "CCT Strategy":
+            target_map = maps["color_mode_keywords"]
+        elif item["group"] == "Controls":
+            target_map = maps["control_keywords"]
+        elif item["group"] == "Installation / Linking":
+            target_map = maps["mounting_keywords"]
+        elif item["group"] == "Ratings / Certifications":
+            target_map = maps["certification_keywords"]
+        elif item["group"] == "Performance Configuration":
+            target_map = maps["power_keywords"]
+        elif attribute == "finish":
+            target_map = maps["finish_keywords"]
+        elif attribute == "material":
+            target_map = maps["material_keywords"]
+        if target_map is None:
+            continue
+        for term in generated_match_terms(attribute, raw_value, label):
+            target_map.setdefault(term.lower(), label)
+    return maps
+
+
+def category_is_accessory(slug: str) -> bool:
+    return slug in {
+        "dimmers",
+        "goof_ring",
+        "low_voltage_transformers",
+        "rough_ins",
+        "sensors",
+        "trim",
+        "wire",
+        "wire_connectors",
+    }
+
+
+def generated_static_features(slug: str, candidates: list[dict[str, Any]]) -> list[str]:
+    labels = [
+        str(item["label"])
+        for item in candidates
+        if item["coverage_pct"] >= 60
+        and item["group"] in {"Controls", "Ratings / Certifications", "Installation / Linking"}
+        and item["attribute"] != "usage"
+        and str(item["label"]).lower() not in {"non-dimmable", "dry rated"}
+    ]
+    if not labels and not category_is_accessory(slug):
+        labels.append("dimmable")
+    return list(dict.fromkeys(labels))[:8]
+
+
+def category_filtered_candidates(slug: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not category_is_accessory(slug):
+        return candidates
+    allowed_groups = {"Physical / Compatibility", "Ratings / Certifications", "Performance Configuration"}
+    blocked_attributes = {
+        "daylight_sensor_auto_dimming",
+        "dimmable",
+        "dimming_details",
+        "linkable",
+        "motion_sensor",
+        "mount_type",
+        "power_type",
+        "sensor_details",
+        "wiring_type",
+    }
+    return [
+        item
+        for item in candidates
+        if item["group"] in allowed_groups and item["attribute"] not in blocked_attributes
+    ]
+
+
+def generated_feature_fields() -> list[dict[str, Any]]:
+    return [
+        {
+            "path": "identity.ideation_name",
+            "extractors": [
+                "size_range",
+                "style_keywords",
+                "mounting_keywords",
+                "color_mode_keywords",
+                "power_keywords",
+                "control_keywords",
+                "certification_keywords",
+            ],
+        },
+        {
+            "path": "physical.size_form_factor",
+            "extractors": ["size_range", "style_keywords", "mounting_keywords"],
+        },
+        {"path": "physical.mounting_type", "extractors": ["mounting_keywords"]},
+        {"path": "physical.finish_color", "extractors": ["finish_keywords"]},
+        {"path": "physical.material", "extractors": ["material_keywords"]},
+        {"path": "electrical.cct_primary", "extractors": ["color_mode_keywords"]},
+        {"path": "electrical.wattage_primary", "extractors": ["power_keywords"]},
+        {"path": "controls.dimming_type", "extractors": ["control_keywords"]},
+        {"path": "features.certifications", "extractors": ["certification_keywords"]},
+    ]
+
+
+def generated_baseline_attributes(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for item in candidates:
+        if item["coverage_pct"] < 60:
+            continue
+        label = str(item["label"])
+        if label.lower() in {"dry rated", "non-dimmable"}:
+            continue
+        group = str(item["group"])
+        rows.append(
+            {
+                "attribute": group,
+                "label": label,
+                "type": "Baseline",
+                "match_terms": generated_match_terms(str(item["attribute"]), item["raw_value"], label),
+                "recommendation": f"Treat {label} as a baseline RFQ expectation for this category unless the concept intentionally differs.",
+                "notes": "Generated from current category catalog/spec distribution.",
+            }
+        )
+    rows.sort(key=lambda row: (row["attribute"], row["label"]))
+    return rows[:10]
+
+
+def generic_generated_attribute_groups() -> list[dict[str, Any]]:
+    return [
+        {
+            "attribute": "Core Feature",
+            "type": "Feature",
+            "decision_question": "Which repeated feature is important enough to keep in scope?",
+            "values": [
+                {
+                    "label": "Dimmable",
+                    "match_terms": ["dimmable", "dimming"],
+                    "recommendation": "Keep dimmability when direct competitor examples or the use case make it important.",
+                },
+                {
+                    "label": "Selectable CCT",
+                    "match_terms": ["selectable cct", "cct selectable", "color selectable", "selectable color temperature"],
+                    "recommendation": "Keep selectable CCT when direct competitor examples show it as a repeated buying filter.",
+                },
+            ],
+        }
+    ]
+
+
+def generated_attribute_groups(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    seen: set[tuple[str, str]] = set()
+    for item in candidates:
+        if item["coverage_pct"] < 10:
+            continue
+        group = str(item["group"])
+        label = str(item["label"])
+        marker = (group, label.lower())
+        if marker in seen:
+            continue
+        seen.add(marker)
+        grouped[group].append(item)
+
+    output = []
+    for group in [
+        "CCT Strategy",
+        "Controls",
+        "Installation / Linking",
+        "Performance Configuration",
+        "Physical / Compatibility",
+        "Ratings / Certifications",
+    ]:
+        values = []
+        for item in sorted(grouped.get(group, []), key=lambda row: (-row["coverage_pct"], row["label"]))[:8]:
+            label = str(item["label"])
+            entry = {
+                "label": label,
+                "match_terms": generated_match_terms(str(item["attribute"]), item["raw_value"], label),
+                "recommendation": generated_attribute_recommendation(group, label),
+            }
+            if group == "Ratings / Certifications" and label in {"ETL", "UL", "DLC", "FCC", "RoHS", "Energy Star"}:
+                entry["matcher"] = "certification"
+            values.append(entry)
+        if values:
+            output.append(
+                {
+                    "attribute": group,
+                    "type": GROUP_TYPES.get(group, "Feature"),
+                    "decision_question": f"Which {group.lower()} attributes should this SKU carry?",
+                    "values": values,
+                }
+            )
+    return output or generic_generated_attribute_groups()
+
+
+def build_generated_profiles(
+    connection: sqlite3.Connection,
+    category_rows: list[dict[str, Any]],
+    category_ids: dict[str, int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    feature_profiles: list[dict[str, Any]] = []
+    decision_profiles: list[dict[str, Any]] = []
+    for category in category_rows:
+        slug = category["slug"]
+        category_id = category_ids.get(slug)
+        if not category_id:
+            continue
+        candidates = category_filtered_candidates(slug, generated_profile_candidates(connection, category_id))
+        aliases = list(dict.fromkeys([category["run_name"], category["category"], *category.get("aliases", [])]))
+        match_keywords = [
+            keyword
+            for alias in aliases
+            for keyword in [alias, alias.replace(" lights", ""), alias.replace(" lighting", "")]
+            if keyword
+        ]
+        maps = generated_keyword_maps(candidates)
+        feature_profile = {
+            "id": f"generated_{slug}",
+            "label": f"{category['run_name']} generated SKU signals",
+            "category_matches": [category["run_name"]],
+            "subcategory_matches": aliases,
+            "match_keywords": sorted(set(match_keywords)),
+            "static_features": generated_static_features(slug, candidates),
+            "feature_fields": generated_feature_fields(),
+            **maps,
+            "max_features": 14,
+            "_category_id": category_id,
+        }
+        decision_profile = {
+            "id": f"generated_{slug}_attributes",
+            "label": f"{category['run_name']} Generated Attribute Decisions",
+            "profile_ids": [f"generated_{slug}"],
+            "category_matches": [category["run_name"]],
+            "match_keywords": sorted(set(match_keywords)),
+            "baseline_attributes": generated_baseline_attributes(candidates),
+            "attribute_groups": generated_attribute_groups(candidates),
+            "_category_id": category_id,
+        }
+        feature_profiles.append(feature_profile)
+        decision_profiles.append(decision_profile)
+    return feature_profiles, decision_profiles
+
+
+def write_generated_profile_configs(
+    paths: ProjectPaths,
+    feature_profiles: list[dict[str, Any]],
+    decision_profiles: list[dict[str, Any]],
+) -> tuple[Path, Path]:
+    target_dir = paths.source_data / "category_intelligence"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    def public_profile(profile: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in profile.items() if not key.startswith("_")}
+
+    feature_path = target_dir / GENERATED_FEATURE_PROFILE_FILENAME
+    feature_path.write_text(
+        json.dumps(
+            {
+                "version": date.today().isoformat(),
+                "description": "Generated baseline feature-signal profiles from current category intelligence data.",
+                "profiles": [public_profile(profile) for profile in feature_profiles],
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    decision_path = target_dir / GENERATED_ATTRIBUTE_DECISION_PROFILE_FILENAME
+    decision_path.write_text(
+        json.dumps(
+            {
+                "version": date.today().isoformat(),
+                "description": "Generated baseline Section F attribute decision profiles from current category intelligence data.",
+                "profiles": [public_profile(profile) for profile in decision_profiles],
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    return feature_path, decision_path
+
+
+def insert_generated_feature_profiles(
+    connection: sqlite3.Connection,
+    paths: ProjectPaths,
+    category_rows: list[dict[str, Any]],
+    category_ids: dict[str, int],
+) -> int:
+    feature_profiles, decision_profiles = build_generated_profiles(connection, category_rows, category_ids)
+    feature_path, _ = write_generated_profile_configs(paths, feature_profiles, decision_profiles)
+    now = utc_now()
+    count = 0
+    for profile in feature_profiles:
+        category_id = int(profile["_category_id"])
+        connection.execute(
+            """
+            INSERT INTO category_feature_signal_profile(
+                category_id, profile_key, label, applies_to_json, feature_signals_json,
+                source, source_reference, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                category_id,
+                profile["id"],
+                profile["label"],
+                json_text(profile.get("category_matches") or []),
+                json_text(flatten_profile_signals(profile)),
+                "generated_category_intelligence_profile",
+                str(feature_path),
+                now,
+            ),
+        )
+        count += 1
     return count
 
 
@@ -831,6 +1436,7 @@ def build_category_intelligence_database(paths: ProjectPaths, output_path: Path 
         counts["feature_profiles"] = insert_feature_profiles(connection, paths, lookup, category_ids)
         counts["sku_decoder_codes"] = insert_sku_decoder_codes(connection, paths, category_ids)
         counts["stackline_segments_from_redshift_cache_inventory"] = insert_redshift_cache_inventory(connection, paths, lookup, category_ids)
+        counts["generated_feature_profiles"] = insert_generated_feature_profiles(connection, paths, category_rows, category_ids)
 
         if not (product_count or clean_product_count) and not any((paths.source_data / folder).exists() for folder in ["shopify", "catalog", "postgres_exports", "catalog_specs"]):
             warnings.append("No local Shopify/catalog product export folder was found; shopify_category_products remains empty until a private export is supplied.")

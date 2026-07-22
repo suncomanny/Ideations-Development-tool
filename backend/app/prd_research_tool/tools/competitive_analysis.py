@@ -36,6 +36,13 @@ RAW_STAGE_KEYS = [
 ]
 PROFILE_PATH = Path(__file__).resolve().parents[1] / "config" / "category_signal_profiles.json"
 ATTRIBUTE_DECISION_PROFILE_PATH = Path(__file__).resolve().parents[1] / "config" / "category_attribute_decision_profiles.json"
+GENERATED_ATTRIBUTE_DECISION_PROFILE_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "backend"
+    / "source_data"
+    / "category_intelligence"
+    / "generated_category_attribute_decision_profiles.json"
+)
 
 
 def normalize_text(value: Any) -> str | None:
@@ -185,10 +192,21 @@ def load_category_signal_profiles() -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def load_category_attribute_decision_profiles() -> dict[str, Any]:
     """Load category-aware attribute decision profiles for Section F."""
-    if not ATTRIBUTE_DECISION_PROFILE_PATH.exists():
-        return {"profiles": []}
-    with ATTRIBUTE_DECISION_PROFILE_PATH.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    payload = {"profiles": []}
+    if ATTRIBUTE_DECISION_PROFILE_PATH.exists():
+        with ATTRIBUTE_DECISION_PROFILE_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    profiles = list(payload.get("profiles") or [])
+    if GENERATED_ATTRIBUTE_DECISION_PROFILE_PATH.exists():
+        with GENERATED_ATTRIBUTE_DECISION_PROFILE_PATH.open("r", encoding="utf-8") as handle:
+            generated = json.load(handle)
+        seen = {profile.get("id") for profile in profiles if isinstance(profile, dict)}
+        for profile in generated.get("profiles") or []:
+            if isinstance(profile, dict) and profile.get("id") not in seen:
+                profiles.append(profile)
+                seen.add(profile.get("id"))
+    payload["profiles"] = profiles
+    return payload
 
 
 def parse_number(value: Any) -> float | None:
