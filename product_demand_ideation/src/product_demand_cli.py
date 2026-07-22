@@ -20,10 +20,10 @@ def refresh_local_sunco_catalog_cache(root: Path | str) -> None:
     print("Refresh complete:")
     print(f"  {refreshed}")
     print()
-    print("Normal Step 1B runs will read this local cache for Sunco catalog coverage.")
+    print("Normal Step 1 runs will read this local cache for Sunco catalog coverage.")
 
 
-def run_product_demand_step1b(root: Path | str) -> None:
+def run_category_ideation_generator(root: Path | str) -> None:
     root = Path(root)
     import sys
 
@@ -31,22 +31,21 @@ def run_product_demand_step1b(root: Path | str) -> None:
     if str(backend_app) not in sys.path:
         sys.path.insert(0, str(backend_app))
 
-    from step1b_generator import generate_product_demand_step1b
+    from category_ideation_generator import generate_category_ideation_workbook
 
-    print("Product Demand Ideation Generator")
+    print("Category Ideation Generator")
     print()
-    print("This is the isolated Step 1B shadow tool built from the existing Step 1 pipeline.")
-    print("It reuses Step 1 category data, Stackline/Amazon evidence, Sunco coverage checks, workbook format, and Step 2 handoff.")
+    print("This Step 1 tool uses live Redshift demand evidence, Stackline/Amazon evidence, Sunco coverage checks, and the Step 2 handoff workbook format.")
     print()
     try:
-        output, issues, metadata = generate_product_demand_step1b(root)
+        output, issues, metadata = generate_category_ideation_workbook(root)
     except RuntimeError as exc:
         print()
         print("Run stopped:")
         print(f"  {exc}")
         raise SystemExit(1) from exc
     print()
-    print("Step 1B output:")
+    print("Step 1 output:")
     print(f"  {output}")
     if metadata.get("step2_handoff"):
         print("Step 2 handoff copy:")

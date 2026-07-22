@@ -19,7 +19,7 @@ Category: Vaportights
 
 Step 2 input:
 
-`outputs/Ideations/Gap Workbooks/vaportights/vaportights_true_gaps_2026-06-29_113653_product_demand_step1b.xlsx`
+`outputs/Ideations/Gap Workbooks/vaportights/vaportights_true_gaps_2026-06-29_113653.xlsx`
 
 Step 2 output:
 
@@ -104,7 +104,7 @@ Recommended release communication:
 
 ## Next Work
 
-- Strengthen Step 2 after Step 1B changes so PRD ideation rows carry enough clean, SKU-specific detail.
+- Strengthen Step 2 after Step 1 changes so PRD ideation rows carry enough clean, SKU-specific detail.
 - Run a full Step 3 category with all rows, not only a smoke subset.
 - Build the team-facing deployment folder/package and test it from the same shared path a PM would use.
 - Push the current fixes once smoke-test outputs and deployment docs are reviewed.

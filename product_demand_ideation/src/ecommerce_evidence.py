@@ -1123,7 +1123,7 @@ def _mark_strategic_outlier(row: dict[str, Any], reason: str) -> dict[str, Any]:
     marked["confidence"] = "Directional"
     marked["why_gap"] = (
         f"{_text(marked.get('why_gap'))}\n\n"
-        f"Strategic outlier note: {reason} It fell below the normal Step 1B rank cutoff but remains visible for PM review."
+        f"Strategic outlier note: {reason} It fell below the normal Step 1 rank cutoff but remains visible for PM review."
     ).strip()
     marked["pm_action"] = (
         "Review as a strategic high-output outlier. Confirm application fit, installation constraints, heat/load profile, "
@@ -1222,7 +1222,7 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
                 "example": example_text,
                 "source_url": example.get("url"),
                 "review_url": example.get("url"),
-                "sunco_check": "Sunco active-catalog exact-spec coverage will be applied by the Product Demand overlay before this row is published.",
+                "sunco_check": "Sunco active-catalog exact-spec coverage will be applied before this row is published.",
                 "why_gap": (
                     f"Redshift ecommerce competitor evidence found {len(group_rows)} PDP listing(s) across {len(domains)} domain(s) "
                     f"and {len(brands)} brand(s) for this spec pattern. Observed stock decrease totals {decrease:g} units across "

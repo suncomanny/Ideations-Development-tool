@@ -1,15 +1,14 @@
 ﻿# Product Demand Ideation
 
-This is the isolated workspace for adding the combined product-demand + Stackline model to the Ideation Development tool.
+This folder contains the demand-weighted Step 1 model for the Ideation Development tool.
 
-It is intentionally separate from the existing scripts:
+The user-facing workflow remains:
 
 - `1 - Category Ideation Generator.py`
-- `1B - Product Demand Ideation Generator.py`
 - `2 - Ideation Template Generator.py`
 - `3 - Ideation Research Tool.py`
 
-`1B - Product Demand Ideation Generator.py` is the user-facing launcher for this isolated tree. Do not wire this into the existing Step 1 flow until the isolated model is validated.
+`1 - Category Ideation Generator.py` is the production launcher for Step 1.
 
 ## Standalone Requirement
 
@@ -68,7 +67,7 @@ Refresh it intentionally with:
 Refresh Product Demand Local Catalog Cache.py
 ```
 
-Normal `1B` workbook runs read from that local cache. If the cache does not exist yet, the tool seeds it through Postgres MCP and then continues. For Sunco's current catalog change rate, a weekly or monthly refresh is enough for routine A/B testing; refresh before leadership readouts or after known catalog/product-status updates.
+Normal Step 1 workbook runs read from that local cache. If the cache does not exist yet, the tool seeds it through Postgres MCP and then continues. For Sunco's current catalog change rate, a weekly or monthly refresh is enough for routine A/B testing; refresh before leadership readouts or after known catalog/product-status updates.
 
 The SharePoint workbook `Sku's Classification.xlsx` / `PowerBI Families` can also be cached locally for the latest PM/category/Series ownership layer:
 
@@ -88,7 +87,7 @@ Then refresh it:
 Refresh Product Demand SKU Classification Cache.py
 ```
 
-You can still pass an explicit workbook path if you are testing a temporary export. This cache is optional at runtime. When present, 1B enriches Sunco active-catalog coverage checks with PowerBI category, PM responsible, and Series. Step 0 also uses the cache through `templates/powerbi_category_designation_map.csv` to align generated line-review queries with the same reporting categories.
+You can still pass an explicit workbook path if you are testing a temporary export. This cache is optional at runtime. When present, Step 1 enriches Sunco active-catalog coverage checks with PowerBI category, PM responsible, and Series. Step 0 also uses the cache through `templates/powerbi_category_designation_map.csv` to align generated line-review queries with the same reporting categories.
 
 After the classification cache refresh, update the shared run-category reference:
 
@@ -104,7 +103,7 @@ Category profiles can be checked without generating workbooks:
 Audit Product Demand Category Profiles.py
 ```
 
-This uses Redshift MCP first, falls back to local Redshift ODBC only when MCP is unavailable, and writes a compact CSV audit under `product_demand_ideation/profile_audits/`. Use it before expanding 1B to a new category so noisy filters are fixed before leadership sees the output.
+This uses Redshift MCP first, falls back to local Redshift ODBC only when MCP is unavailable, and writes a compact CSV audit under `product_demand_ideation/profile_audits/`. Use it before expanding Step 1 to a new category so noisy filters are fixed before leadership sees the output.
 
 ## Model
 
@@ -144,9 +143,9 @@ The Redshift refresh path is:
 Redshift MCP -> product_demand_ideation/experiments/<category>/exports/*_ecommerce_competitor_evidence_*.json
 ```
 
-If Redshift MCP is unavailable, the tool falls back to local ODBC (`DSN=Redshift`, `REDSHIFT_DSN`, or equivalent local env settings). Normal 1B runs refresh ecommerce snapshots when the newest snapshot is not Redshift-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window.
+If Redshift MCP is unavailable, the tool falls back to local ODBC (`DSN=Redshift`, `REDSHIFT_DSN`, or equivalent local env settings). Normal Step 1 runs refresh ecommerce snapshots when the newest snapshot is not Redshift-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window.
 
-When Redshift ecommerce PDP rows exist for the selected category, 1B uses them to lead the main `Recommendations` tab. Amazon-derived display rows stay in `Amazon Recommendations`.
+When Redshift ecommerce PDP rows exist for the selected category, Step 1 uses them to lead the main `Recommendations` tab. Amazon-derived display rows stay in `Amazon Recommendations`.
 
 For light-producing categories, the model also normalizes luminaire performance:
 
@@ -156,7 +155,7 @@ For light-producing categories, the model also normalizes luminaire performance:
 
 This prevents the model from treating a 75W competitor product and a 72W Sunco product as different opportunities when both serve the same 9000lm brightness tier.
 
-## Current Pilot
+## Current Model
 
 Pilot category:
 
@@ -172,10 +171,10 @@ Reason:
 
 Current launcher behavior:
 
-- `1B - Product Demand Ideation Generator.py` uses the same category picker as the original Step 1 flow.
-- `Smart Lighting` is currently added as a 1B-only category owned by Manny. It is sourced from the PowerBI Families high-level category and should not be added to the main Step 1 category reference until validated.
-- The current validated pilot category is Panels/Ceiling Panels because inventory movement snapshots exist there.
-- Do not promote the 1B model into the default Step 1 flow until the workbook contract, Sunco coverage check, Stackline/Amazon validation behavior, and product-demand weighting are approved.
+- `1 - Category Ideation Generator.py` uses the production category picker.
+- `Smart Lighting` is included as a Step 1 category owned by Manny. It is sourced from the PowerBI Families high-level category.
+- The current validated smoke categories include Panels/Ceiling Panels, Vaportights, Wraparounds, and Grow Lights.
+- The demand-weighted model is the default Step 1 flow once this branch is promoted.
 
 Smart Lighting caveat:
 
@@ -185,14 +184,14 @@ Smart Lighting caveat:
 
 ## Workbook Validation
 
-Every `1B` run validates the generated workbook before reporting success.
+Every Step 1 run validates the generated workbook before reporting success.
 
 Validation checks:
 
 - required Step 1 sheet names exist
 - Step 2-facing headers match the original Step 1 contract
-- `Amazon Recommendations` stays data-empty until real Stackline/Amazon-led rows are connected
-- `Amazon Recommendations` reuses Step 1 rows and evidence; 1B only appends the product-demand overlay
+- `Amazon Recommendations` stays Stackline/Amazon-led
+- `Amazon Recommendations` reuses Step 1 rows and evidence; Step 1 appends demand scoring to the research notes
 - Step 2 can parse usable rows
 - output remains under `product_demand_ideation`
 - Excel can open/save the file
@@ -204,7 +203,7 @@ product_demand_ideation/
   README.md
   src/
     product_demand_cli.py
-    step1b_generator.py
+    category_ideation_generator.py
     ecommerce_evidence.py
     luminaire_performance.py
     sunco_catalog_coverage.py

@@ -27,7 +27,7 @@ Integration branch: `codex/integration-step2-category-profiles`
 - `python "0 - Refresh Backend Data.py" --skip-line-review --skip-stackline`
 - `python backend\maintenance_scripts\smoke_step2_sku_normalizer.py`
 - Direct Step 3 prepare/finalize from the synthetic Panels Step 2 workbook.
-- Real non-panel Step 2 smoke from existing Vaportights Step 1B workbook.
+- Real non-panel Step 2 smoke from existing Vaportights Step 1 workbook.
 - Direct Vaportights generated-profile selection check.
 
 ## Generated Smoke Artifacts
@@ -48,7 +48,7 @@ Integration branch: `codex/integration-step2-category-profiles`
 - Step 3 smoke prepared a Panels session, autofilled six Stackline-backed Amazon/Home Depot artifacts, finalized locally, and published a combined workbook.
 - Banned artifact wording was not found in the smoke Step 3 workbook: `schema_references`, `templates/Competitors.md`, `Bulb-dependent`, `chandelier`, `validate against Step 1 listing and supplier file`, `TBD from supplier`, `pack-count target`, `_target_pack_count`.
 - Vaportights generated profile selection now resolves to `generated_vaportights` and `generated_vaportights_attributes`, with clean labels such as `Wet rated`, `Hardwired`, `IP65`, `5000K`, `120-277V`, `Dimmable`, `Ceiling mount`, `Frosted finish`, `Polycarbonate`, `40W`, `DLC`, `FCC`, `ETL`.
-- Real Vaportights Step 2 smoke generated 20 rows from `vaportights_true_gaps_2026-06-29_113653_product_demand_step1b.xlsx`.
+- Real Vaportights Step 2 smoke generated 20 rows from the demand-weighted Step 1 workbook.
 - Real Vaportights Step 2 smoke did not contain banned/category-bleed terms: `chandelier`, `Bulb-dependent`, `schema_references`, `templates/Competitors.md`, `pack-count target`, `_target_pack_count`, `validate against Step 1 listing and supplier file`, `TBD from supplier`.
 - Vaportights Step 3 prepare could not be completed in this sandbox because the `Redshift` ODBC DSN is not configured. The failure occurred before session creation while enforcing the fresh Redshift Stackline cache requirement.
 

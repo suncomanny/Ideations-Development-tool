@@ -53,7 +53,7 @@ def _write_step1_smoke_workbook(paths: ProjectPaths) -> Path:
         (
             "Step 1 evidence explicitly names 2x2 and 2x4 panel sizes, 40W and 50W "
             "load targets, 3,200lm and 5,000lm output tiers, selectable CCT, and 0-10V dimming. "
-            "Product Demand overlay score: 75/100."
+            "Demand confidence score: 75/100."
         ),
         "Move forward as SKU-level concepts",
     ])

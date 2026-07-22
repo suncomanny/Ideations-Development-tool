@@ -7,14 +7,14 @@ Branch: `codex/step2-sku-normalizer`
 
 Step 2 is the PM-curated opportunity-to-SKU translation layer.
 
-Step 1 / 1B finds and ranks product opportunities. PMs review that workbook and delete the rows they do not want to move forward. Step 2 should then convert the remaining usable rows into clean SKU-level ideation rows that can support PRD drafting, RFQ preparation, and Step 3 research.
+Step 1 finds and ranks product opportunities. PMs review that workbook and delete the rows they do not want to move forward. Step 2 should then convert the remaining usable rows into clean SKU-level ideation rows that can support PRD drafting, RFQ preparation, and Step 3 research.
 
 Step 2 should not behave like another demand-ranking gate. PM row deletion is the gate.
 
 ## Scope
 
 In scope:
-- Read the PM-curated Step 1 / 1B workbook.
+- Read the PM-curated Step 1 workbook.
 - Preserve all remaining usable opportunity rows unless a row is structurally unusable.
 - Convert each remaining opportunity into one clean candidate SKU ideation row.
 - Extract concise proposed requirements from Step 1 evidence.
@@ -256,7 +256,7 @@ Validated on 2026-07-22 for Step 2 SKU normalizer first pass:
 
 Run after each implementation pass:
 - `python -m compileall backend\app product_demand_ideation\src`
-- Step 2 from a fresh Panels Step 1B workbook.
+- Step 2 from a fresh Panels Step 1 workbook.
 - Step 2 from a category with a strategic outlier or medium-confidence row intentionally left in the workbook.
 - Step 2 from one non-panel category to confirm no category bleed.
 - Scan generated workbook for banned wording:

@@ -8,7 +8,7 @@ PRODUCT_DEMAND_EXTRA_CATEGORIES = (
         "owner": "Manny",
         "name": "Smart",
         "run_name": "Smart Lighting",
-        "notes": "1B-only category sourced from PowerBI Families high-level category. Do not add to main Step 1 until approved.",
+        "notes": "Category sourced from PowerBI Families high-level category.",
     },
 )
 

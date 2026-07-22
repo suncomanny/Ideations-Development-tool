@@ -631,7 +631,7 @@ def _competitor_label(item: dict[str, Any]) -> str | None:
 def _extract_demand_metrics(item: dict[str, Any]) -> dict[str, Any]:
     why = str(item.get("why") or "")
     metrics: dict[str, Any] = {}
-    metrics["overlay_score"] = _first_match(why, r"Product Demand overlay score:\s*([0-9.]+/100)")
+    metrics["overlay_score"] = _first_match(why, r"(?:Demand confidence score|Product Demand overlay score):\s*([0-9.]+/100)")
     metrics["score_profile"] = _first_match(why, r"Score profile:\s*([^\n.]+)")
     metrics["observed_stock_decrease"] = _first_match(why, r"Observed stock decrease totals\s*([0-9,.]+)\s*units")
     metrics["decrease_events"] = _first_match(why, r"across\s*([0-9,]+)\s*decrease event")

@@ -42,18 +42,19 @@ Keep the current scripts unchanged:
 3 - Ideation Research Tool.py
 ```
 
-Add a new launcher later:
+Use the production Step 1 launcher:
 
 ```text
-1B - Product Demand Ideation Generator.py
+1 - Category Ideation Generator.py
 ```
 
-That gives PMs a clean separation:
+That gives PMs the standard workflow:
 
-- `1 - Category Ideation Generator.py` = original validated model
-- `1B - Product Demand Ideation Generator.py` = new combined inventory + Stackline model
+- `1 - Category Ideation Generator.py` = demand-weighted category ideation model
+- `2 - Ideation Template Generator.py` = PM-kept rows converted to SKU-level ideations
+- `3 - Ideation Research Tool.py` = detailed research workbook per ideation row
 
-The new launcher must be able to run without Codex chat assistance. The final PM workflow should use Redshift ODBC, Postgres MCP, or approved refreshed snapshots.
+The launcher must be able to run without Codex chat assistance where local connectors are available. The final PM workflow should use Redshift MCP, Redshift ODBC fallback, Postgres MCP, or approved refreshed snapshots.
 
 ## Proposed File Tree
 
@@ -87,19 +88,19 @@ product_demand_ideation/
 
 ## Output Separation
 
-Original Step 1 output remains:
+Step 1 output remains:
 
 ```text
 outputs/Ideations/Gap Workbooks/
 ```
 
-Product Demand output should go to:
+Backend run copies can also go to:
 
 ```text
 product_demand_ideation/experiments/<category_slug>/outputs/
 ```
 
-Only after validation should promoted outputs move into the normal output tree.
+The Step 2 handoff copy belongs in the normal output tree.
 
 ## Data Access Separation
 
@@ -114,57 +115,43 @@ This matters because Redshift, Postgres MCP, and workbook generation have differ
 Recommended production flow:
 
 ```text
-Redshift ODBC DSN or REDSHIFT_DSN -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
+Redshift MCP -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
 ```
 
-Recommended development fallback:
+Recommended fallback:
 
 ```text
-Postgres MCP/cache refresh -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
+Redshift ODBC or approved source cache -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
 ```
 
-The workbook generator should not care whether the snapshot came from Redshift ODBC, Postgres MCP, or an approved export, as long as the snapshot follows the same data contract.
+The workbook generator should not care whether the snapshot came from Redshift MCP, Redshift ODBC, Postgres MCP, or an approved export, as long as the snapshot follows the same data contract.
 
 ## Integration Phases
 
-### Phase 1: Shadow Tool
+### Phase 1: Production Step 1 Model
 
 Build:
 
 ```text
-1B - Product Demand Ideation Generator.py
+1 - Category Ideation Generator.py
 ```
 
-This runs only the isolated product-demand engine.
+This runs the demand-weighted Step 1 engine.
 
 It should:
 
-- start with the Ceiling Panels pilot until workbook behavior is validated
+- support the production category picker
 - run the combined model
 - output workbook in the original workbook format
-- write only to the isolated product-demand output folder
+- publish the Step 2 handoff copy to the normal gap workbook folder
 - validate the workbook contract before reporting success
 
-It should not call or modify the original Step 1 generator.
-
-### Phase 1B: Category Picker Expansion
-
-After the Ceiling Panels workbook contract is approved, update `1B - Product Demand Ideation Generator.py` to behave like the original Step 1 category picker.
-
-The expanded behavior should:
-
-- list available product-demand categories
-- load category-specific config
-- refresh or read that category's source snapshots
-- write outputs under `product_demand_ideation/experiments/<category_slug>/outputs/`
-- keep original Step 1 outputs untouched
-
-### Phase 2: Backtest Against Original Step 1
+### Phase 2: Backtest Against Prior Step 1
 
 For Ceiling Panels, compare:
 
-- original Step 1 workbook
-- product-demand workbook
+- prior Step 1 workbook
+- demand-weighted Step 1 workbook
 - manual NPI decisions
 
 Focus comparison on:
@@ -175,28 +162,16 @@ Focus comparison on:
 - competitor inventory movement
 - PM action usefulness
 
-### Phase 3: Optional Bridge
+### Phase 3: Deployment Hardening
 
-After validation, add an opt-in bridge to the original Step 1 flow.
-
-The bridge should be disabled by default.
-
-Possible behavior:
-
-```text
-Run original Step 1 only
-Run Product Demand only
-Run both and compare
-```
-
-Do not replace the original model until leadership accepts the new combined model.
+After validation, keep the PM-facing process as Step 1, Step 2, and Step 3, and move legacy/experimental wording out of the production branch.
 
 ## Branch Rule
 
 All of this should stay on:
 
 ```text
-codex/product-demand-ideation
+codex/integration-step2-category-profiles
 ```
 
 Do not merge into `main` until:

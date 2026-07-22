@@ -500,7 +500,7 @@ def build_step1_freshness_rows(
                 "schema_reference_json",
                 "Step 1 seed/reference",
                 active=include_legacy_active,
-                note="Older seed manifest. Product Demand Step 1B should prefer refreshed Redshift/Postgres-backed sources when available.",
+                note="Older seed manifest. Step 1 should prefer refreshed Redshift/Postgres-backed sources when available.",
             )
         )
     if amazon_rerun_path:

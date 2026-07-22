@@ -974,7 +974,7 @@ def first_sentence(text: Any) -> str:
 
 
 def extract_research_note_evidence(packet: dict[str, Any]) -> dict[str, str]:
-    """Extract structured Step 1B evidence from the research notes block."""
+    """Extract structured Step 1 evidence from the research notes block."""
     target_profile = as_dict(packet.get("target_profile"))
     notes = normalize_text(target_profile.get("research_notes"))
     evidence: dict[str, str] = {}
@@ -998,7 +998,7 @@ def extract_research_note_evidence(packet: dict[str, Any]) -> dict[str, str]:
     if competitor_match:
         evidence["competitor_evidence"] = clean_fragment(competitor_match.group(1))
 
-    overlay_match = re.search(r"Product Demand overlay score:\s*([0-9.]+/100)[^\n.]*", notes, flags=re.IGNORECASE)
+    overlay_match = re.search(r"(?:Demand confidence score|Product Demand overlay score):\s*([0-9.]+/100)[^\n.]*", notes, flags=re.IGNORECASE)
     if overlay_match:
         evidence["overlay_score"] = clean_fragment(overlay_match.group(0))
 
@@ -1502,8 +1502,8 @@ def certification_summary(packet: dict[str, Any], analysis: dict[str, Any]) -> s
     return "No required certification captured in current Step 2 row."
 
 
-def step1b_evidence_rows(packet: dict[str, Any], analysis: dict[str, Any]) -> list[list[Any]]:
-    """Build source-backed rows for the Step 1B demand evidence block."""
+def step1_demand_evidence_rows(packet: dict[str, Any], analysis: dict[str, Any]) -> list[list[Any]]:
+    """Build source-backed rows for the Step 1 demand evidence block."""
     performance = as_dict(analysis.get("performance_estimation"))
     snapshot = as_dict(performance.get("market_snapshot"))
     evidence = extract_research_note_evidence(packet)
@@ -1516,7 +1516,7 @@ def step1b_evidence_rows(packet: dict[str, Any], analysis: dict[str, Any]) -> li
     if evidence.get("competitor_evidence"):
         rows.append(["Competitor PDP coverage", evidence["competitor_evidence"], "Redshift ecommerce competitor snapshot", ""])
     if evidence.get("review_link"):
-        rows.append(["Primary competitor PDP", evidence["review_link"], "Step 1B verified review link", {"value": "Open listing", "hyperlink": evidence["review_link"]}])
+        rows.append(["Primary competitor PDP", evidence["review_link"], "Step 1 verified review link", {"value": "Open listing", "hyperlink": evidence["review_link"]}])
     if evidence.get("sunco_coverage"):
         rows.append(["Sunco active-catalog coverage", evidence["sunco_coverage"], "Postgres product/catalog snapshot", ""])
     if snapshot:
@@ -1529,7 +1529,7 @@ def step1b_evidence_rows(packet: dict[str, Any], analysis: dict[str, Any]) -> li
             ]
         )
     if evidence.get("vendor_bias_risk"):
-        rows.append(["Evidence caveat", f"Vendor bias risk: {evidence['vendor_bias_risk']}", "Step 1B demand overlay", ""])
+        rows.append(["Evidence caveat", f"Vendor bias risk: {evidence['vendor_bias_risk']}", "Step 1 demand evidence", ""])
     return rows
 
 
@@ -3357,9 +3357,9 @@ def render_row_sheet(
     row = write_table(
         ws,
         row,
-        "Step 1B Demand + Coverage Evidence",
+        "Step 1 Demand + Coverage Evidence",
         ["Signal", "Evidence", "Source", "Link"],
-        step1b_evidence_rows(packet, analysis),
+        step1_demand_evidence_rows(packet, analysis),
     )
     row = write_table(
         ws,

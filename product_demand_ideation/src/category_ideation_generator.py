@@ -209,7 +209,7 @@ def _attach_product_demand_freshness(
             inventory_source,
             "Main Recommendations demand and inventory movement",
             active=bool(inventory_snapshot_path),
-            note="Loaded or refreshed by Product Demand Step 1B.",
+            note="Loaded or refreshed by Step 1.",
         )
     )
     rows.append(
@@ -219,12 +219,12 @@ def _attach_product_demand_freshness(
             catalog_source,
             "Existing Sunco catalog coverage check",
             active=bool(catalog_snapshot_path),
-            note="Loaded or refreshed by Product Demand Step 1B.",
+            note="Loaded or refreshed by Step 1.",
         )
     )
     rows.append(
         _freshness_record(
-            "Live Redshift Stackline Step 1B query",
+            "Live Redshift Stackline Step 1 query",
             None,
             data.get("product_demand_stackline_source") or "redshift_stackline",
             "Amazon recommendation demand",
@@ -855,7 +855,7 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
             sql,
             timeout_seconds=240,
             default_odbc=REDSHIFT_ODBC_CONNECTION,
-            client_name="sunco-step1b-stackline-redshift",
+            client_name="sunco-step1-stackline-redshift",
         )
     except Exception as exc:
         return [], (
@@ -967,7 +967,7 @@ def _apply_product_demand_overlay(
                     note,
                     (
                         "Strategic outlier lane: source-backed high-output concept kept visible despite falling below "
-                        "the normal Step 1B rank cutoff. Treat as a watchlist/RFQ-screening hypothesis, not a standard panel replacement."
+                        "the normal Step 1 rank cutoff. Treat as a watchlist/RFQ-screening hypothesis, not a standard panel replacement."
                     ),
                 )
                 row["pm_action"] = (
@@ -1020,7 +1020,7 @@ def _apply_product_demand_overlay(
         output["source_from_amazon_count"] = 0
         output["source_supplemental_count"] = 0
         output["source_supplemental_warnings"] = [
-            "No Redshift ecommerce competitor rows were available for this category. Product Demand Step 1B did not use legacy local recommendation seeds."
+            "No Redshift ecommerce competitor rows were available for this category. Step 1 did not use legacy local recommendation seeds."
         ]
     redshift_stackline_rows, redshift_stackline_audit, redshift_stackline_source = _stackline_amazon_rows_from_redshift(category_slug, category_name)
     if redshift_stackline_rows:
@@ -1031,7 +1031,7 @@ def _apply_product_demand_overlay(
         output["product_demand_stackline_audit"] = redshift_stackline_audit
         output["product_demand_stackline_note"] = (
             f"Live Redshift Stackline Atlas returned {len(redshift_stackline_rows)} Amazon rows. "
-            "Legacy local Step 1 Amazon rows were excluded from Product Demand Step 1B."
+            "Legacy local Step 1 Amazon rows were excluded from this Step 1 run."
         )
     else:
         output["amazon_rows"] = []
@@ -1041,7 +1041,7 @@ def _apply_product_demand_overlay(
         output["product_demand_stackline_note"] = redshift_stackline_audit
         output["product_demand_stackline_note"] = _append_note(
             redshift_stackline_audit,
-            "Step 1B requires Redshift/ODBC Stackline data and did not use legacy local Amazon recommendation seeds.",
+            "Step 1 requires Redshift Stackline data and did not use legacy local Amazon recommendation seeds.",
         )
     _apply_catalog_coverage_to_amazon_rows(output.get("amazon_rows", []), catalog_rows, category_slug)
     max_inventory_decrease = max((float(row.get("observed_stock_decrease") or 0) for row in inventory_rows), default=0.0)
@@ -1074,7 +1074,7 @@ def _apply_product_demand_overlay(
             elif score.get("supplemental"):
                 inventory_note = "not applied because this is a supplemental adjacent-category row"
             note = (
-                f"Product Demand overlay score: {score['total']}/100. "
+                f"Demand confidence score: {score['total']}/100. "
                 f"Score profile: {score['profile_name']}. "
                 f"Weights: Stackline/Amazon demand {score['stackline_weight']}%={score['stackline_score']}; "
                 f"Sunco coverage/gap {score['sunco_weight']}%={score['sunco_score']}; "
@@ -1126,7 +1126,7 @@ def _apply_product_demand_overlay(
     return output
 
 
-def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], dict[str, Any]]:
+def generate_category_ideation_workbook(root: Path | str) -> tuple[Path, list[str], dict[str, Any]]:
     root = Path(root)
     existing = _existing_step1_imports()
     paths = existing["ProjectPaths"].from_root(root)
@@ -1139,7 +1139,7 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
         data = _apply_product_demand_overlay(paths, data, inventory_rows, catalog_rows, existing, category.slug, category.run_name)
         if not data.get("amazon_rows"):
             raise RuntimeError(
-                "Product Demand Step 1B stopped before writing a workbook because Amazon/Stackline rows are missing. "
+                "Step 1 stopped before writing a workbook because Amazon/Stackline rows are missing. "
                 "This would create an incomplete combined-model report. Fix Redshift MCP access or the local ODBC fallback and rerun. "
                 f"Stackline note: {data.get('product_demand_stackline_note') or 'No Stackline note was returned.'}"
             )
@@ -1160,9 +1160,9 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
         run_stamp = existing["timestamp"]()
         output_folder = root / "product_demand_ideation" / "experiments" / category.slug / "outputs"
         output_folder.mkdir(parents=True, exist_ok=True)
-        output = output_folder / f"{category.slug}_product_demand_step1b_{run_stamp}.xlsx"
+        output = output_folder / f"{category.slug}_category_ideation_{run_stamp}.xlsx"
         step2_handoff_folder = paths.gap_category_outputs(category.slug)
-        step2_handoff = step2_handoff_folder / f"{category.slug}_true_gaps_{run_stamp}_product_demand_step1b.xlsx"
+        step2_handoff = step2_handoff_folder / f"{category.slug}_true_gaps_{run_stamp}.xlsx"
         existing["ensure_template_copy"](template, output)
 
         workbook = load_workbook(output)
@@ -1179,12 +1179,12 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
             for row in data.get("product_demand_overlay", [])[:30]
         )
         audit_rows = [
-            ("Project", "sunco-product-opportunity-engine / Product Demand Step 1B"),
+            ("Project", "sunco-product-opportunity-engine / Step 1 Category Ideation"),
             ("Category", category.run_name),
             ("Owner", category.owner),
             ("Generated", run_stamp),
-            ("Original Step 1 reused", "Yes - category data, Stackline/Amazon evidence, Sunco coverage checks, workbook writer, line review, and Step 2 contract are reused."),
-            ("Step 1B change", "Uses Redshift ecommerce competitor PDP evidence for the main Recommendations tab, keeps Amazon Recommendations Stackline-led, saves to the isolated product_demand_ideation output folder, and publishes a clearly labeled Step 2 handoff copy."),
+            ("Step 1 base model", "Uses category data, Redshift ecommerce competitor PDP evidence, Stackline/Amazon evidence, Sunco coverage checks, workbook writer, line review, and Step 2 contract."),
+            ("Step 1 data model", "Uses Redshift ecommerce competitor PDP evidence for the main Recommendations tab, keeps Amazon Recommendations Stackline-led, and publishes a Step 2 handoff copy."),
             ("Step 2 handoff workbook", str(step2_handoff)),
             ("Weighting rule", f"Recommendations tab: {WEIGHT_PROFILES['source_rows']['description']}. Amazon Recommendations tab: {WEIGHT_PROFILES['amazon_rows']['description']}."),
             ("Luminaire performance rule", "For light-producing categories, compare lumens as the user-facing brightness target and wattage as the installer/load target. Prefer recommendations that meet a brightness tier at equal or lower wattage."),
@@ -1198,7 +1198,7 @@ def generate_product_demand_step1b(root: Path | str) -> tuple[Path, list[str], d
             ("Source freshness detail", data.get("freshness_summary") or "No source freshness records were available."),
             ("Main Recommendations source rule", "If Redshift ecommerce PDP rows exist for the selected category, they lead the main Recommendations tab. Amazon-derived display rows are kept out of the Shopify/front-end tab."),
             ("Inventory role", "Inventory movement is a Shopify/ecommerce demand proxy for the main tab and a supporting signal only for the Amazon tab."),
-            ("Product Demand overlay rows", overlay_summary or "No overlay rows."),
+            ("Demand score rows", overlay_summary or "No scored rows."),
             ("Image status", "\n".join(image_status) if image_status else "No images embedded for this category run."),
             ("Category intelligence audit", existing["format_intelligence_audit"](data["category_intelligence"])),
         ]
