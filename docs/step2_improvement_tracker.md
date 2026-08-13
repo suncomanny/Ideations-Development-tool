@@ -179,6 +179,7 @@ Acceptance criteria:
 Implementation notes:
 - The Run Audit now documents the PM-curated row intake rule.
 - The Run Audit now states that pack-size and pack-count recommendations are intentionally excluded from Step 2 and handled by the separate pack-size workflow.
+- Step 2 now filters pack-count-only Amazon cues and removes `multi-pack` from generated ideation/action language while preserving raw source listing titles for verification.
 - Additional audit cleanup may still be needed after the next workbook review.
 - Source Mapping headers are now normalized on each run so URL support columns are always present.
 

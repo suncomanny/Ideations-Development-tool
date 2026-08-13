@@ -766,7 +766,6 @@ def _industrial_design_cues(text: str) -> list[str]:
         ("thermoplastic/ABS housing", ("thermoplastic", "abs")),
         ("90-minute backup", ("90-minute", "90 minute", "90 min")),
         ("UL listed", ("ul listed", " ul ")),
-        ("multi-pack", ("2 pack", "4 pack", "6 pack", "12 pack", "2-pack", "4-pack", "6-pack", "12-pack")),
     ]
     for label, terms in checks:
         if all(term in raw for term in terms) if label == "combo exit sign with heads" else any(term in raw for term in terms):
@@ -823,16 +822,16 @@ def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: s
                 "gap_reason": "Stackline/Amazon leader" if not is_sunco else "Sunco Amazon incumbent",
                 "evidence": evidence,
                 "sunco_check": (
-                    "Sunco already has this Amazon design/pack position; use as defend-and-optimize benchmark."
+                    "Sunco already has this Amazon design/spec position; use as defend-and-optimize benchmark."
                     if is_sunco
-                    else "Needs Sunco Amazon exact-design and pack-size coverage check before treating as a launch gap."
+                    else "Needs Sunco Amazon exact-design and spec coverage check before treating as a launch gap."
                 ),
                 "example": f"{brand} {model}: {title}".strip(),
                 "review_url": f"https://www.amazon.com/dp/{asin}" if asin.startswith("B") else "",
                 "action": (
-                    "Audit PDP imagery, pack strategy, title/spec copy, price position, and ad/rank support for this proven Amazon design."
+                    "Audit PDP imagery, title/spec copy, price position, and ad/rank support for this proven Amazon design."
                     if is_sunco
-                    else "Compare Sunco's Amazon catalog against this design cue and pack/price architecture; scope listing or SKU gap if not covered."
+                    else "Compare Sunco's Amazon catalog against this design cue and spec/price architecture; scope listing or SKU gap if not covered."
                 ),
                 "source_systems": ["redshift:stackline_atlas_gold_sales", "redshift:stackline_atlas_current_segment", "redshift:stackline_atlas_products"],
                 "_stackline_local_sales": retail_sales,
@@ -871,8 +870,8 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
 
 def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_rows: list[dict[str, Any]], category_slug: str) -> None:
     generic_checks = (
-        "Needs Sunco Amazon exact-design and pack-size coverage check before treating as a launch gap.",
-        "Sunco already has this Amazon design/pack position; use as defend-and-optimize benchmark.",
+        "Needs Sunco Amazon exact-design and spec coverage check before treating as a launch gap.",
+        "Sunco already has this Amazon design/spec position; use as defend-and-optimize benchmark.",
         "Pending Sunco Amazon coverage join.",
     )
     for row in rows:
@@ -895,12 +894,12 @@ def _apply_catalog_coverage_to_amazon_rows(rows: list[dict[str, Any]], catalog_r
             row["gap_reason"] = "Existing Amazon/Sunco coverage - optimize or revise"
             note = _append_note(
                 note,
-                "Amazon action: likely optimize listing, pack visibility, image story, pricing, or search placement before creating a new SKU.",
+                "Amazon action: likely optimize listing, spec visibility, image story, pricing, or search placement before creating a new SKU.",
             )
             row["action"] = _revision_action_text(
                 {"sunco_check": note},
                 display_missing_features,
-                "optimize listing, pack visibility, image story, pricing, or search placement before creating a new SKU",
+                "optimize listing, spec visibility, image story, pricing, or search placement before creating a new SKU",
             )
         elif coverage_score >= 50:
             row["classification"] = ACTION_CONCEPT_REVIEW

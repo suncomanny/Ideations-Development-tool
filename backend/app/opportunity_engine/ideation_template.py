@@ -376,6 +376,58 @@ def _source_url_status(link_validation: Any) -> str:
     return text
 
 
+def _is_pack_count_phrase(value: Any) -> bool:
+    text = _cell_text(value).lower()
+    if not text:
+        return False
+    return bool(re.fullmatch(r"(?:multi[-\s]?pack|\d{1,3}\s*[-\s]?(?:pack|pk|pc|piece|pieces))", text))
+
+
+def _is_pack_count_only_recommendation(value: Any) -> bool:
+    text = _cell_text(value)
+    if not re.search(r"\bmulti[-\s]?pack\b", text, flags=re.IGNORECASE):
+        return False
+    tail = re.split(r"\s+-\s+", text)[-1]
+    cues = [part.strip() for part in tail.split(",") if part.strip()]
+    return bool(cues) and all(_is_pack_count_phrase(cue) for cue in cues)
+
+
+def _clean_pack_count_recommendation(value: Any) -> Any:
+    if value is None:
+        return value
+    text = str(value)
+    text = re.sub(r"\s*,\s*multi[-\s]?pack\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bmulti[-\s]?pack\b\s*,?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+-\s*$", "", text).strip()
+    text = re.sub(r"\s{2,}", " ", text)
+    return text
+
+
+def _clean_pack_count_cue_sentences(value: Any) -> Any:
+    if value is None:
+        return value
+    text = str(value)
+
+    def replace_cues(match: re.Match[str]) -> str:
+        cues = [cue.strip() for cue in match.group(1).split(",") if cue.strip()]
+        cues = [cue for cue in cues if not _is_pack_count_phrase(cue)]
+        if not cues:
+            return ""
+        return f"Industrial-design cues: {', '.join(cues)}."
+
+    text = re.sub(r"Industrial-design cues:\s*([^.\n]+)\.", replace_cues, text, flags=re.IGNORECASE)
+    replacements = {
+        "design/pack position": "design/spec position",
+        "exact-design and pack-size coverage": "exact-design and spec coverage",
+        "pack strategy, ": "",
+        "pack/price architecture": "spec/price architecture",
+        "pack visibility": "spec visibility",
+    }
+    for old, new in replacements.items():
+        text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     workbook = load_workbook(gap_workbook, data_only=False)
     rows: list[dict[str, Any]] = []
@@ -411,22 +463,23 @@ def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]],
                 audit["recommendations_rows_skipped"] += 1
                 audit["skipped_rows"].append(f"Recommendations row {row_index}: {skip_reason}")
                 continue
+            recommendation = _clean_pack_count_recommendation(recommendation)
             why_text = str(record.get("Why This Is A True Gap") or "").lower()
             source_label = "Amazon" if "amazon/stackline-derived display row" in why_text else "Sunco.com/ecommerce"
-            exact_source_names.add(str(record.get("Recommendation")).strip().lower())
+            exact_source_names.add(str(recommendation).strip().lower())
             audit["recommendations_rows_selected"] += 1
             rows.append({
                 "source": source_label,
                 "classification": _classification_from_recommendation(recommendation, "Step 1 opportunity"),
                 "subcategory": record.get("Subcategory"),
-                "name": record.get("Recommendation"),
+                "name": recommendation,
                 "priority": record.get("Priority"),
                 "confidence": record.get("Confidence"),
                 "example": record.get("Competitor / Ecommerce Example"),
                 "url": record.get("Review Link"),
-                "sunco_check": record.get("Sunco Active-Catalog Check"),
-                "why": record.get("Why This Is A True Gap"),
-                "action": record.get("PM Action"),
+                "sunco_check": _clean_pack_count_cue_sentences(record.get("Sunco Active-Catalog Check")),
+                "why": _clean_pack_count_cue_sentences(record.get("Why This Is A True Gap")),
+                "action": _clean_pack_count_cue_sentences(record.get("PM Action")),
                 "_line_review_reference": line_review_reference,
                 "_line_review_sku_lookup": line_review_sku_lookup,
             })
@@ -449,6 +502,11 @@ def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]],
                 audit["amazon_rows_skipped"] += 1
                 audit["skipped_rows"].append(f"Amazon Recommendations row {row_index}: {skip_reason}")
                 continue
+            if _is_pack_count_only_recommendation(recommendation):
+                audit["amazon_rows_skipped"] += 1
+                audit["skipped_rows"].append(f"Amazon Recommendations row {row_index}: pack-count-only Amazon cue belongs in the separate pack-size workflow")
+                continue
+            recommendation = _clean_pack_count_recommendation(recommendation)
             is_supporting_evidence = str(recommendation or "").strip().lower() in exact_source_names
             classification = record.get("Amazon classification") or _classification_from_recommendation(recommendation, "Amazon recommendation")
             if is_supporting_evidence and "supporting" not in str(classification).lower():
@@ -458,14 +516,14 @@ def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]],
                 "source": "Amazon",
                 "classification": classification,
                 "subcategory": record.get("Subcategory"),
-                "name": record.get("Amazon-channel recommendation"),
+                "name": recommendation,
                 "priority": record.get("Priority"),
                 "confidence": record.get("Confidence"),
                 "example": record.get("Example listing"),
                 "url": record.get("Review link"),
-                "sunco_check": record.get("Sunco Amazon coverage check"),
-                "why": record.get("Stackline / Amazon evidence"),
-                "action": record.get("PM action"),
+                "sunco_check": _clean_pack_count_cue_sentences(record.get("Sunco Amazon coverage check")),
+                "why": _clean_pack_count_cue_sentences(record.get("Stackline / Amazon evidence")),
+                "action": _clean_pack_count_cue_sentences(record.get("PM action")),
                 "_line_review_reference": line_review_reference,
                 "_line_review_sku_lookup": line_review_sku_lookup,
             })
