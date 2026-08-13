@@ -26,32 +26,7 @@ Expected production path:
 approved source connector -> local snapshot/cache refresh -> workbook generator
 ```
 
-Redshift ecommerce competitor evidence now prefers Redshift MCP. The local ODBC DSN is still supported as the fallback when MCP is unavailable:
-
-```text
-DSN=Redshift
-```
-
-If the Windows DSN does not persist credentials, create this local-only file:
-
-```text
-C:\Users\<user>\.sunco_ideation_development\.env
-```
-
-Supported Redshift ODBC fallback options:
-
-```text
-REDSHIFT_ODBC_DSN=Redshift
-REDSHIFT_USER=odbc_user
-REDSHIFT_PASSWORD=<password from data team>
-REDSHIFT_DATABASE=dev
-```
-
-Alternatively, use a full ODBC string:
-
-```text
-REDSHIFT_DSN=DSN=Redshift;UID=odbc_user;PWD=<password>;Database=dev
-```
+Redshift ecommerce competitor evidence now requires Redshift MCP. Local Redshift ODBC is not used by the production Step 1 flow because workstation DSN issues can produce empty or stale reports.
 
 Postgres ODBC is not required for Manny's workstation. Sunco catalog coverage uses the saved local SQLite cache, a Postgres MCP refresh, or approved Postgres/Redshift export files.
 
@@ -103,7 +78,7 @@ Category profiles can be checked without generating workbooks:
 Audit Product Demand Category Profiles.py
 ```
 
-This uses Redshift MCP first, falls back to local Redshift ODBC only when MCP is unavailable, and writes a compact CSV audit under `product_demand_ideation/profile_audits/`. Use it before expanding Step 1 to a new category so noisy filters are fixed before leadership sees the output.
+This uses Redshift MCP and writes a compact CSV audit under `product_demand_ideation/profile_audits/`. Use it before expanding Step 1 to a new category so noisy filters are fixed before leadership sees the output.
 
 ## Model
 
@@ -134,8 +109,8 @@ The Amazon recommendation tab stays Amazon/Stackline-led:
 
 The ecommerce layer is sourced from Redshift:
 
-- `public.v_competitors_scrapping_latest` for latest competitor PDP title/spec/category/price/image/URL evidence
-- `public.v_competitors_inventory_daily` for PDP inventory movement and price movement by URL
+- `public.vw_competitors_scraping_latest` for latest competitor PDP title/spec/category/price/image/URL evidence
+- `public.vw_competitors_inventory_daily` for PDP inventory movement and price movement by URL
 
 The Redshift refresh path is:
 
@@ -143,7 +118,7 @@ The Redshift refresh path is:
 Redshift MCP -> product_demand_ideation/experiments/<category>/exports/*_ecommerce_competitor_evidence_*.json
 ```
 
-If Redshift MCP is unavailable, the tool falls back to local ODBC (`DSN=Redshift`, `REDSHIFT_DSN`, or equivalent local env settings). Normal Step 1 runs refresh ecommerce snapshots when the newest snapshot is not Redshift-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window.
+If Redshift MCP is unavailable, the tool stops before writing a workbook instead of falling back to local ODBC. Normal Step 1 runs refresh ecommerce snapshots when the newest snapshot is not Redshift MCP-sourced or is older than 24 hours. Use `PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS` to change that freshness window.
 
 When Redshift ecommerce PDP rows exist for the selected category, Step 1 uses them to lead the main `Recommendations` tab. Amazon-derived display rows stay in `Amazon Recommendations`.
 

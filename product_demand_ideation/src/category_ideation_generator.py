@@ -60,8 +60,6 @@ IMAGE_CONTENT_TYPES = {
     "image/gif": ".gif",
 }
 
-REDSHIFT_ODBC_CONNECTION = "DSN=Redshift"
-
 def _existing_step1_imports():
     from opportunity_engine.category_intelligence import format_intelligence_audit
     from opportunity_engine.gap_generator import (
@@ -854,7 +852,6 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
         items, source_connector = execute_redshift_sql(
             sql,
             timeout_seconds=240,
-            default_odbc=REDSHIFT_ODBC_CONNECTION,
             client_name="sunco-step1-stackline-redshift",
         )
     except Exception as exc:
@@ -862,7 +859,12 @@ def _stackline_amazon_rows_from_redshift(category_slug: str, category_name: str,
             "Redshift Stackline query failed through MCP-first Redshift access: "
             f"{sanitize_redshift_error(exc)}"
         ), "redshift_failed_stackline_atlas"
-    source_system = "redshift_mcp_stackline_atlas" if is_redshift_mcp_source(source_connector) else "redshift_odbc_stackline_atlas"
+    if not is_redshift_mcp_source(source_connector):
+        return [], (
+            f"Unexpected Redshift connector for Stackline evidence: {source_connector}. "
+            "Step 1 requires Redshift MCP."
+        ), "redshift_failed_stackline_atlas"
+    source_system = "redshift_mcp_stackline_atlas"
     audit = f"Source connector: {source_connector}\n\n{sql}"
     return _stackline_items_to_amazon_rows(items, "Live Redshift Stackline Atlas", limit=limit, category_slug=category_slug), audit, source_system
 
@@ -1140,7 +1142,7 @@ def generate_category_ideation_workbook(root: Path | str) -> tuple[Path, list[st
         if not data.get("amazon_rows"):
             raise RuntimeError(
                 "Step 1 stopped before writing a workbook because Amazon/Stackline rows are missing. "
-                "This would create an incomplete combined-model report. Fix Redshift MCP access or the local ODBC fallback and rerun. "
+                "This would create an incomplete combined-model report. Fix Redshift MCP access and rerun. "
                 f"Stackline note: {data.get('product_demand_stackline_note') or 'No Stackline note was returned.'}"
             )
         line_review_context = existing["prepare_line_review_context"](paths, category)
@@ -1154,7 +1156,7 @@ def generate_category_ideation_workbook(root: Path | str) -> tuple[Path, list[st
             inventory_source=inventory_source,
             catalog_snapshot_path=catalog_snapshot_path,
             catalog_source=catalog_source,
-            stackline_live=data.get("product_demand_stackline_source") in {"redshift_mcp_stackline_atlas", "redshift_odbc_stackline_atlas"},
+            stackline_live=data.get("product_demand_stackline_source") == "redshift_mcp_stackline_atlas",
         )
         template = existing["_template_path"](paths)
         run_stamp = existing["timestamp"]()

@@ -624,7 +624,7 @@ with movement as (
     round(sum(case when stock_qty_delta < 0 then abs(stock_qty_delta) else 0 end) / nullif(datediff(day, min(scrape_date), max(scrape_date)) + 1, 0) * 7, 1) as avg_units_per_week_observed_window,
     round(sum(case when stock_qty_delta < 0 then abs(stock_qty_delta) else 0 end) / nullif(datediff(day, min(case when stock_qty_delta < 0 then scrape_date end), max(case when stock_qty_delta < 0 then scrape_date end)) + 1, 0) * 7, 1) as avg_units_per_week_decrease_window,
     datediff(day, max(case when stock_qty_delta < 0 then scrape_date end), max(scrape_date)) as days_since_last_decrease
-  from public.v_competitors_inventory_daily
+  from public.vw_competitors_inventory_daily
   group by url
 )
 select
@@ -668,7 +668,7 @@ select
   movement.days_since_last_decrease,
   movement.latest_stock_qty,
   movement.latest_inventory_scrape_date
-from public.v_competitors_scrapping_latest latest
+from public.vw_competitors_scraping_latest latest
 left join movement on movement.url = latest.url
 where ({where_clause})
 {exclude_clause}
@@ -699,7 +699,7 @@ def _snapshot_age_hours(payload: dict[str, Any]) -> float | None:
 
 
 def _is_redshift_snapshot(payload: dict[str, Any]) -> bool:
-    return str(payload.get("source_system") or "").lower().startswith(("redshift_mcp", "redshift_odbc"))
+    return str(payload.get("source_system") or "").lower().startswith("redshift_mcp")
 
 
 def _should_refresh_ecommerce_snapshot(payload: dict[str, Any]) -> bool:
@@ -741,11 +741,9 @@ def write_ecommerce_snapshot(
 def refresh_ecommerce_snapshot_via_redshift(exports_dir: Path, category_slug: str, timeout_seconds: int = 240) -> Path:
     sql = build_ecommerce_sql(category_slug)
     rows, source_connector = execute_redshift_sql(sql, timeout_seconds=timeout_seconds, client_name="sunco-ecommerce-competitor-redshift")
-    source_system = (
-        "redshift_mcp_ecommerce_competitor_snapshot"
-        if is_redshift_mcp_source(source_connector)
-        else "redshift_odbc_dsn_ecommerce_competitor_snapshot"
-    )
+    if not is_redshift_mcp_source(source_connector):
+        raise RuntimeError(f"Unexpected Redshift connector for ecommerce evidence: {source_connector}")
+    source_system = "redshift_mcp_ecommerce_competitor_snapshot"
     return write_ecommerce_snapshot(exports_dir, category_slug, source_system, sql, rows, source_connector=source_connector)
 
 
@@ -1232,7 +1230,7 @@ def ecommerce_rows_to_step1_rows(category_name: str, rows: list[dict[str, Any]],
                 "pm_action": (
                     "Scope as a new variant around this normalized spec pattern. Use the coverage result and demand evidence in this row as the launch rationale; do not copy the competitor SKU one-for-one."
                 ),
-                "source_systems": ["redshift:v_competitors_scrapping_latest", "redshift:v_competitors_inventory_daily"],
+                "source_systems": ["redshift:vw_competitors_scraping_latest", "redshift:vw_competitors_inventory_daily"],
                 "image_url": example.get("image"),
                 "_ecommerce_score": score,
                 "_ecommerce_group_size": len(group_rows),

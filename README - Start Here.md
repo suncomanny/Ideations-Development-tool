@@ -153,11 +153,11 @@ These JSON snapshots are backend data and are intentionally ignored by git. They
 
 Step 0 runs through Postgres MCP and writes local JSON snapshots. It does not require local Postgres ODBC access.
 
-`1 - Category Ideation Generator.py` now runs the demand-weighted Step 1 flow. It refreshes ecommerce competitor evidence and Stackline/Amazon evidence through local Redshift ODBC, uses the local Sunco catalog cache or Postgres MCP refresh for catalog coverage, writes a Step 1-compatible workbook, and publishes a Step 2 handoff copy under `outputs/Ideations/Gap Workbooks/<category>`.
+`1 - Category Ideation Generator.py` now runs the demand-weighted Step 1 flow. It refreshes ecommerce competitor evidence and Stackline/Amazon evidence through Redshift MCP, uses the local Sunco catalog cache or Postgres MCP refresh for catalog coverage, writes a Step 1-compatible workbook, and publishes a Step 2 handoff copy under `outputs/Ideations/Gap Workbooks/<category>`.
 
 Source ownership is intentionally split:
 
-- Redshift ODBC: ecommerce competitor movement, Stackline/Amazon evidence.
+- Redshift MCP: ecommerce competitor movement, Stackline/Amazon evidence.
 - Postgres MCP: Sunco catalog coverage cache and Step 0 line-review snapshots.
 - SharePoint `PowerBI Families` export/cache: SKU family, reporting category, Series, and PM ownership designations used for category matching and catalog coverage enrichment.
 - Ignored local cache/export files: repeatable workbook runs without querying every source every time.

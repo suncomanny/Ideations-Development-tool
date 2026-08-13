@@ -40,7 +40,7 @@ select
   first_seen_date,
   tracking_days,
   appearances
-from public.v_competitors_scrapping_latest
+from public.vw_competitors_scraping_latest
 where
   lower(coalesce(name, '')) like '%panel%'
   or lower(coalesce(name, '')) like '%troffer%'

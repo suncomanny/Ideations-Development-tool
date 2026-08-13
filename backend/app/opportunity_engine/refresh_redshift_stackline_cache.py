@@ -14,7 +14,6 @@ from .stackline_segments import STACKLINE_SEGMENT_OVERRIDES, sql_values, stackli
 
 CACHE_FOLDER = Path("redshift_stackline_cache")
 CACHE_MAX_AGE_DAYS = 30
-REDSHIFT_ODBC_CONNECTION = "DSN=Redshift"
 RETAILER_CHANNELS = {
     1: "amazon",
     6: "home_depot",
@@ -493,7 +492,6 @@ def refresh_category_stackline_cache(
     try:
         with RedshiftQueryClient(
             timeout_seconds=timeout_seconds,
-            default_odbc=REDSHIFT_ODBC_CONNECTION,
             client_name="sunco-stackline-cache-redshift",
         ) as redshift:
             connection_source = redshift.connection_source
@@ -605,7 +603,7 @@ def refresh_redshift_stackline_caches(
 
     return {
         "generated_at": utc_now(),
-        "connection_source": "Redshift MCP primary; ODBC fallback",
+        "connection_source": "Redshift MCP",
         "categories": len(categories),
         "results": results,
     }

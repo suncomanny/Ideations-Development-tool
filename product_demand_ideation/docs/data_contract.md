@@ -11,7 +11,6 @@ The production version should keep database refresh separate from workbook gener
 Preferred production access:
 
 - Redshift through MCP when running from Codex or another MCP-capable runner
-- Redshift through a local ODBC DSN or `REDSHIFT_DSN` only as the fallback when MCP is unavailable
 - Postgres through MCP for Sunco catalog and line-review refreshes
 - secrets stored in the machine-local file, not in SharePoint:
 
@@ -21,7 +20,7 @@ C:\Users\<user>\.sunco_ideation_development\.env
 
 Development fallback:
 
-- Redshift MCP, local Redshift ODBC fallback, Postgres MCP, and approved cache/export files are the supported integrated runtime sources.
+- Redshift MCP, Postgres MCP, and approved cache/export files are the supported integrated runtime sources.
 - Workbook generation should read refreshed snapshot files where possible; the refresh step owns live connector access.
 
 The workbook generator should read from local snapshot files written by a refresh step. That keeps database access separate from workbook creation and makes the tool easier to run, debug, and hand off.
@@ -31,7 +30,7 @@ The workbook generator should read from local snapshot files written by a refres
 Primary source:
 
 ```text
-public.v_competitors_scrapping_latest
+public.vw_competitors_scraping_latest
 ```
 
 Use for:
@@ -57,7 +56,7 @@ Known issue:
 Primary source:
 
 ```text
-public.v_competitors_inventory_daily
+public.vw_competitors_inventory_daily
 ```
 
 Use for:

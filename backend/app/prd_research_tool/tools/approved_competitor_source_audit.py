@@ -98,7 +98,7 @@ with approved as (
         count(*) as latest_rows,
         count(distinct url) as latest_urls,
         max(scraped_at) as latest_last_scraped
-    from public.v_competitors_scrapping_latest
+    from public.vw_competitors_scraping_latest
     where url is not null and url <> ''
     group by 1
 ), latest_rollup as (
@@ -119,7 +119,7 @@ with approved as (
         max(scrape_date) as inventory_last_scraped,
         sum(case when stock_qty_delta < 0 then abs(stock_qty_delta) else 0 end) as observed_stock_decrease,
         count(case when stock_qty_delta < 0 then 1 end) as decrease_events
-    from public.v_competitors_inventory_daily
+    from public.vw_competitors_inventory_daily
     where url is not null and url <> ''
     group by 1
 ), inventory_rollup as (
@@ -163,7 +163,7 @@ order by
 
 
 def run_coverage_query(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str, str | None]:
-    """Run the approved-domain coverage query through Redshift MCP, with ODBC fallback."""
+    """Run the approved-domain coverage query through Redshift MCP."""
     if str(PRODUCT_DEMAND_SRC) not in sys.path:
         sys.path.insert(0, str(PRODUCT_DEMAND_SRC))
     from redshift_query import execute_redshift_sql, sanitize_redshift_error
@@ -176,8 +176,8 @@ def run_coverage_query(sources: list[dict[str, Any]]) -> tuple[list[dict[str, An
             client_name="sunco-approved-competitor-source-audit",
         )
         return rows, connection_source, None
-    except Exception as exc:  # pragma: no cover - depends on workstation ODBC credentials.
-        return [], "Redshift MCP primary; ODBC fallback", sanitize_redshift_error(exc)
+    except Exception as exc:  # pragma: no cover - depends on live MCP availability.
+        return [], "Redshift MCP", sanitize_redshift_error(exc)
 
 
 def merge_coverage(sources: list[dict[str, Any]], coverage_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -54,7 +54,7 @@ That gives PMs the standard workflow:
 - `2 - Ideation Template Generator.py` = PM-kept rows converted to SKU-level ideations
 - `3 - Ideation Research Tool.py` = detailed research workbook per ideation row
 
-The launcher must be able to run without Codex chat assistance where local connectors are available. The final PM workflow should use Redshift MCP, Redshift ODBC fallback, Postgres MCP, or approved refreshed snapshots.
+The final PM workflow should use Redshift MCP, Postgres MCP, or approved refreshed snapshots. Local Redshift ODBC is no longer part of the production Step 1 path because workstation DSN issues can produce empty reports.
 
 ## Proposed File Tree
 
@@ -121,10 +121,10 @@ Redshift MCP -> product_demand_ideation/experiments/<category_slug>/exports/ -> 
 Recommended fallback:
 
 ```text
-Redshift ODBC or approved source cache -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
+approved source cache -> product_demand_ideation/experiments/<category_slug>/exports/ -> workbook output
 ```
 
-The workbook generator should not care whether the snapshot came from Redshift MCP, Redshift ODBC, Postgres MCP, or an approved export, as long as the snapshot follows the same data contract.
+The workbook generator should not care whether the snapshot came from Redshift MCP, Postgres MCP, or an approved export, as long as the snapshot follows the same data contract.
 
 ## Integration Phases
 
@@ -179,5 +179,5 @@ Do not merge into `main` until:
 - Ceiling Panels pilot works
 - workbook format is approved
 - data team fixes or confirms latest competitor PDP export behavior
-- standalone Redshift ODBC and Postgres MCP refreshes work outside Codex chat
+- Redshift MCP and Postgres MCP refreshes work in the intended deployment environment
 - original Step 1 output remains unchanged in default mode

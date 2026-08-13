@@ -18,7 +18,7 @@ select
   stock_qty_delta,
   prev_price,
   price_delta
-from public.v_competitors_inventory_daily
+from public.vw_competitors_inventory_daily
 where
   lower(coalesce(name, '')) like '%panel%'
   or lower(coalesce(name, '')) like '%troffer%';
