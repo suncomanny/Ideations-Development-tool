@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -244,7 +245,40 @@ CATEGORY_PROFILES: dict[str, CategoryProfile] = {
         True,
     ),
     "low_voltage_transformers": CategoryProfile((), ("low voltage transformer", "12v transformer", "24v transformer", "landscape transformer"), ELECTRICAL_EXCLUDE_TERMS),
-    "outdoor_ceiling": CategoryProfile(("surface mount",), ("outdoor ceiling", "porch ceiling", "ceiling mount outdoor"), FIXTURE_EXCLUDE_TERMS + ("emergency vehicle", "hideaway strobe")),
+    "outdoor_ceiling": CategoryProfile(
+        (),
+        (
+            "outdoor ceiling",
+            "porch ceiling",
+            "ceiling mount outdoor",
+            "outdoor flush mount",
+            "indoor / outdoor flush mount ceiling",
+            "indoor/outdoor flush mount ceiling",
+            "outdoor bulkhead",
+            "outdoor cylinder ceiling mount",
+            "outdoor ceiling lighting",
+        ),
+        DEFAULT_EXCLUDE_TERMS
+        + (
+            "canopy",
+            "ceiling fan",
+            "channel",
+            "down light",
+            "downlight",
+            "emergency vehicle",
+            "fan light",
+            "hideaway strobe",
+            "pendant",
+            "shop light",
+            "strobe",
+            "strip",
+            "trailer",
+            "vehicle",
+            "wall lantern",
+            "wall light",
+            "wraparound",
+        ),
+    ),
     "outdoor_security": CategoryProfile(("security", "flood light"), ("security", "motion flood", "flood light"), FIXTURE_EXCLUDE_TERMS + ("lampholder",)),
     "panels": CategoryProfile(
         ("panel", "troffer"),
@@ -702,10 +736,17 @@ def _is_redshift_snapshot(payload: dict[str, Any]) -> bool:
     return str(payload.get("source_system") or "").lower() == "redshift_mcp_ecommerce_competitor_snapshot"
 
 
-def _should_refresh_ecommerce_snapshot(payload: dict[str, Any]) -> bool:
+def _query_signature(sql: str) -> str:
+    return hashlib.sha256(sql.encode("utf-8")).hexdigest()
+
+
+def _should_refresh_ecommerce_snapshot(payload: dict[str, Any], category_slug: str) -> bool:
     if os.environ.get("PRODUCT_DEMAND_FORCE_ECOMMERCE_REFRESH", "").strip() == "1":
         return True
     if not _is_redshift_snapshot(payload):
+        return True
+    expected_signature = _query_signature(build_ecommerce_sql(category_slug))
+    if payload.get("query_signature") != expected_signature:
         return True
     max_age_hours = float(os.environ.get("PRODUCT_DEMAND_ECOMMERCE_SNAPSHOT_MAX_AGE_HOURS") or 24)
     age_hours = _snapshot_age_hours(payload)
@@ -729,6 +770,7 @@ def write_ecommerce_snapshot(
         "category_slug": category_slug,
         "generated_at": generated_at,
         "row_count": len(rows),
+        "query_signature": _query_signature(sql),
         "sql": sql,
         "rows": rows,
     }
@@ -750,7 +792,7 @@ def refresh_ecommerce_snapshot_via_redshift(exports_dir: Path, category_slug: st
 def load_or_refresh_ecommerce_snapshot(exports_dir: Path, category_slug: str) -> tuple[dict[str, Any], Path]:
     path = latest_ecommerce_snapshot(exports_dir, category_slug)
     payload = json.loads(path.read_text(encoding="utf-8")) if path else {}
-    if path is None or _should_refresh_ecommerce_snapshot(payload):
+    if path is None or _should_refresh_ecommerce_snapshot(payload, category_slug):
         path = refresh_ecommerce_snapshot_via_redshift(exports_dir, category_slug)
         payload = json.loads(path.read_text(encoding="utf-8"))
     return payload, path
