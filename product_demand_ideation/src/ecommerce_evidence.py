@@ -699,7 +699,7 @@ def _snapshot_age_hours(payload: dict[str, Any]) -> float | None:
 
 
 def _is_redshift_snapshot(payload: dict[str, Any]) -> bool:
-    return str(payload.get("source_system") or "").lower().startswith("redshift_mcp")
+    return str(payload.get("source_system") or "").lower() == "redshift_mcp_ecommerce_competitor_snapshot"
 
 
 def _should_refresh_ecommerce_snapshot(payload: dict[str, Any]) -> bool:
