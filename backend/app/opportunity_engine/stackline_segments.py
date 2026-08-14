@@ -53,6 +53,7 @@ STACKLINE_SEGMENT_OVERRIDES: dict[str, tuple[str, ...]] = {
     "recessed": ("CC Broad - Recessed Lighting", "RECESSED - ALL", "RECESSED - Retrofits", "RECESSED - Slims"),
     "under_cabinet": ("Under Cabinet Light Fixture", "Under Cabinet Light Fixture - 24 inch"),
     "ceiling_fixtures": ("Ceiling Fixtures",),
+    "residential_fans": ("ceiling fan - indoor",),
     "chandeliers": ("Chandeliers",),
     "vanity": ("Vanity",),
     "bulbs_plus_tubes": ("A19 - Non-Smart / RGB", "DATA-A19-9W", "T8", "DATA-T8", "T8 Bulbs"),
