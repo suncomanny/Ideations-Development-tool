@@ -707,20 +707,23 @@ with latest as (
   from public.tb_stackline_atlas_gold_sales
 ),
 target_segments as (
-  select distinct segment_name, retailer_id, retailer_sku
-  from public.tb_stackline_atlas_current_segment cs
-  where cs.retailer_id = 1
-    and ({segment_filter})
+  select
+    retailer_id,
+    retailer_sku,
+    min(segment_name) as segment_name
+  from (
+    select distinct segment_name, retailer_id, retailer_sku
+    from public.tb_stackline_atlas_current_segment cs
+    where cs.retailer_id = 1
+      and ({segment_filter})
+  ) segments
+  group by 1, 2
 ),
-ranked as (
+sales_rollup as (
   select
     ts.segment_name,
+    s.retailer_id,
     s.retailer_sku,
-    p.model_number,
-    p.title,
-    p.brand_name,
-    p.category_name,
-    p.subcategory_name,
     min(s.week_id) as min_week_id,
     max(s.week_id) as max_week_id,
     sum(s.retail_sales) as retail_sales,
@@ -736,12 +739,58 @@ ranked as (
   join public.tb_stackline_atlas_gold_sales s
     on s.retailer_id = ts.retailer_id
    and s.retailer_sku = ts.retailer_sku
-  left join public.tb_stackline_atlas_products p
-    on p.retailer_id = s.retailer_id
-   and p.retailer_sku = s.retailer_sku
   cross join latest
   where s.week_id >= greatest(202601, latest.max_week - 25)
-  group by 1,2,3,4,5,6,7
+  group by 1,2,3
+),
+product_rows as (
+  select
+    p.retailer_id,
+    p.retailer_sku,
+    p.model_number,
+    p.title,
+    p.brand_name,
+    p.category_name,
+    p.subcategory_name,
+    row_number() over (
+      partition by p.retailer_id, p.retailer_sku
+      order by
+        case when nullif(trim(p.title), '') is not null then 0 else 1 end,
+        length(coalesce(p.title, '')) desc,
+        case when nullif(trim(p.brand_name), '') is not null then 0 else 1 end,
+        case when nullif(trim(p.model_number), '') is not null then 0 else 1 end,
+        p.title
+    ) as product_rank
+  from public.tb_stackline_atlas_products p
+  join target_segments ts
+    on ts.retailer_id = p.retailer_id
+   and ts.retailer_sku = p.retailer_sku
+),
+ranked as (
+  select
+    sr.segment_name,
+    sr.retailer_sku,
+    p.model_number,
+    p.title,
+    p.brand_name,
+    p.category_name,
+    p.subcategory_name,
+    sr.min_week_id,
+    sr.max_week_id,
+    sr.retail_sales,
+    sr.units_sold,
+    sr.avg_retail_price,
+    sr.reviews_count,
+    sr.reviews_rating,
+    sr.content_score,
+    sr.title_score,
+    sr.image_score,
+    sr.weeks
+  from sales_rollup sr
+  left join product_rows p
+    on p.retailer_id = sr.retailer_id
+   and p.retailer_sku = sr.retailer_sku
+   and p.product_rank = 1
 )
 select *
 from ranked
@@ -775,6 +824,7 @@ def _industrial_design_cues(text: str) -> list[str]:
 
 def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: str, limit: int = 10, category_slug: str | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    seen_retailer_skus: set[tuple[str, str]] = set()
     for item in items:
         title = _text(item.get("title"))
         brand = _text(item.get("brand_name") or item.get("brand"))
@@ -792,6 +842,12 @@ def _stackline_items_to_amazon_rows(items: list[dict[str, Any]], source_label: s
             }
         ):
             continue
+        retailer_id = _text(item.get("retailer_id") or "1")
+        asin_key = (retailer_id, asin.upper())
+        if asin and asin_key in seen_retailer_skus:
+            continue
+        if asin:
+            seen_retailer_skus.add(asin_key)
         retail_sales = _as_float(item.get("retail_sales"))
         units_sold = _as_float(item.get("units_sold"))
         avg_price = _as_float(item.get("avg_retail_price") or item.get("price"))
