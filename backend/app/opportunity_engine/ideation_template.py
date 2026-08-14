@@ -468,10 +468,12 @@ def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]],
             source_label = "Amazon" if "amazon/stackline-derived display row" in why_text else "Sunco.com/ecommerce"
             exact_source_names.add(str(recommendation).strip().lower())
             audit["recommendations_rows_selected"] += 1
+            pm_recommendation_name = record.get("PM Recommendation Name")
             rows.append({
                 "source": source_label,
-                "classification": _classification_from_recommendation(recommendation, "Step 1 opportunity"),
+                "classification": _classification_from_recommendation(pm_recommendation_name or recommendation, "Step 1 opportunity"),
                 "subcategory": record.get("Subcategory"),
+                "pm_recommendation_name": pm_recommendation_name,
                 "name": recommendation,
                 "priority": record.get("Priority"),
                 "confidence": record.get("Confidence"),
@@ -508,7 +510,12 @@ def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]],
                 continue
             recommendation = _clean_pack_count_recommendation(recommendation)
             is_supporting_evidence = str(recommendation or "").strip().lower() in exact_source_names
-            classification = record.get("Amazon classification") or _classification_from_recommendation(recommendation, "Amazon recommendation")
+            pm_recommendation_name = record.get("PM Recommendation Name")
+            classification = (
+                _classification_from_recommendation(pm_recommendation_name, "Amazon recommendation")
+                if pm_recommendation_name
+                else record.get("Amazon classification") or _classification_from_recommendation(recommendation, "Amazon recommendation")
+            )
             if is_supporting_evidence and "supporting" not in str(classification).lower():
                 classification = f"{classification} + Step 1 supporting evidence"
             audit["amazon_rows_selected"] += 1
@@ -516,6 +523,7 @@ def _read_gap_rows_with_audit(gap_workbook: Path) -> tuple[list[dict[str, Any]],
                 "source": "Amazon",
                 "classification": classification,
                 "subcategory": record.get("Subcategory"),
+                "pm_recommendation_name": pm_recommendation_name,
                 "name": recommendation,
                 "priority": record.get("Priority"),
                 "confidence": record.get("Confidence"),
@@ -943,6 +951,22 @@ def _clean_name_component(value: Any, *, allow_generic: bool = False) -> str:
     return text
 
 
+def _step1_pm_recommendation_name(item: dict[str, Any], strategy: str) -> str:
+    if item.get("_sku_candidate_target"):
+        return ""
+    text = _cell_text(item.get("pm_recommendation_name"))
+    if not text:
+        return ""
+    lowered = text.lower()
+    if any(marker in lowered for marker in SOURCE_NAME_MARKERS):
+        return ""
+    body = _strip_action_prefix(text)
+    body = re.sub(r"\s+", " ", body).strip(" ,;:-")
+    if not body:
+        return ""
+    return f"{strategy}: {body}"
+
+
 def _dedupe_name_parts(parts: list[str]) -> list[str]:
     output: list[str] = []
     seen: set[str] = set()
@@ -1048,6 +1072,9 @@ def _sku_defining_ideation_name(
     profile: dict[str, Any],
 ) -> str:
     strategy = enriched.get("strategy") if enriched.get("strategy") in {ACTION_NPD, ACTION_REVISION, ACTION_CONCEPT_REVIEW} else ACTION_CONCEPT_REVIEW
+    step1_pm_name = _step1_pm_recommendation_name(item, strategy)
+    if step1_pm_name:
+        return step1_pm_name
     form_factor = _clean_name_component(enriched.get("size_form_factor"), allow_generic=True)
     if not form_factor or any(marker in form_factor.lower() for marker in SOURCE_NAME_MARKERS):
         form_factor = _category_name_fallback(category, profile)

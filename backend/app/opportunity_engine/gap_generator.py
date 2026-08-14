@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import date, datetime
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from openpyxl.cell.cell import MergedCell
@@ -41,6 +42,7 @@ TRUE_GAP_HEADERS = {
     "Recommendations": [
         "Image",
         "Subcategory",
+        "PM Recommendation Name",
         "Recommendation",
         "Priority",
         "Confidence",
@@ -54,6 +56,7 @@ TRUE_GAP_HEADERS = {
     "Amazon Recommendations": [
         "Image",
         "Subcategory",
+        "PM Recommendation Name",
         "Amazon-channel recommendation",
         "Priority",
         "Confidence",
@@ -253,6 +256,248 @@ def _row_decision_rationale(row: dict[str, Any], source_kind: str) -> str:
     if cautions:
         text += "\nCautions: " + "; ".join(cautions)
     return text
+
+
+CONTROLLED_ACTIONS = ("NPD", "Revision", "Concept Review")
+
+SOURCE_NAME_MARKERS = (
+    "amazon stackline opportunity",
+    "amazon-channel recommendation",
+    "stackline/amazon leader",
+    "stackline amazon leader",
+    "amazon recommendation",
+    "shopify ecommerce candidate",
+    "ecommerce competitor demand candidate",
+    "competitor evidence",
+    "source audit",
+    "step 1 evidence",
+    "home depot marketplace",
+)
+
+
+def _controlled_action(row: dict[str, Any]) -> str:
+    text = " ".join(
+        str(row.get(key) or "")
+        for key in ["classification", "recommendation", "pm_action", "action", "gap_reason"]
+    ).lower()
+    if "revision" in text or "existing sunco coverage" in text or "coverage exists" in text or "sunco amazon incumbent" in text:
+        return "Revision"
+    if "concept review" in text or "possible feature gap" in text or "strategic outlier" in text or "watchlist" in text or "partial coverage" in text:
+        return "Concept Review"
+    return "NPD"
+
+
+def _step1_name_text(row: dict[str, Any]) -> str:
+    return "\n".join(
+        str(row.get(key) or "")
+        for key in [
+            "recommendation",
+            "classification",
+            "example",
+            "why_gap",
+            "evidence",
+            "sunco_check",
+            "pm_action",
+            "action",
+        ]
+    )
+
+
+def _title_name_component(value: str) -> str:
+    acronyms = {
+        "led": "LED",
+        "cct": "CCT",
+        "cri": "CRI",
+        "ip": "IP",
+        "ul": "UL",
+        "etl": "ETL",
+        "fcc": "FCC",
+        "0-10v": "0-10V",
+        "triac": "TRIAC",
+        "ft": "ft",
+        "in": "in",
+        "lm": "lm",
+    }
+    pieces = re.split(r"(\s+|/|-)", value.strip())
+    output: list[str] = []
+    for piece in pieces:
+        key = piece.lower()
+        if not piece or piece.isspace() or piece in {"/", "-"}:
+            output.append(piece)
+        elif key in acronyms:
+            output.append(acronyms[key])
+        elif re.fullmatch(r"\d+(?:\.\d+)?(?:x\d+(?:\.\d+)?|ft|in|w|k|lm)?", key):
+            output.append(piece)
+        elif re.fullmatch(r"\d+cct", key):
+            output.append(piece.upper())
+        else:
+            output.append(piece[:1].upper() + piece[1:].lower())
+    text = "".join(output)
+    text = re.sub(r"\bLed\b", "LED", text)
+    text = re.sub(r"\bCct\b", "CCT", text)
+    text = re.sub(r"\bIp(\d+)\b", r"IP\1", text)
+    text = re.sub(r"\b0-10v\b", "0-10V", text, flags=re.IGNORECASE)
+    return text
+
+
+def _dedupe_name_parts(parts: list[str]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        clean = re.sub(r"\s+", " ", str(part or "")).strip(" ,;:-")
+        normalized = re.sub(r"[^a-z0-9]+", "", clean.lower())
+        if not normalized or normalized in seen:
+            continue
+        if any(normalized in re.sub(r"[^a-z0-9]+", "", existing.lower()) for existing in output):
+            continue
+        seen.add(normalized)
+        output.append(clean)
+    return output
+
+
+def _format_number(value: str) -> str:
+    number = float(value.replace(",", ""))
+    if number.is_integer():
+        return f"{int(number):,}"
+    return f"{number:,.1f}".rstrip("0").rstrip(".")
+
+
+def _extract_size_token(text: str) -> str:
+    for pattern, formatter in [
+        (r"\b(\d+(?:\.\d+)?)\s*(?:ft|foot|feet|')\b", lambda m: f"{m.group(1).rstrip('0').rstrip('.') if '.' in m.group(1) else m.group(1)} ft"),
+        (r"\b(\d+)\s*[xX]\s*(\d+)\b", lambda m: f"{m.group(1)}x{m.group(2)}"),
+        (r"\b(\d+(?:\.\d+)?)\s*(?:in|inch|inches|\")\b", lambda m: f"{m.group(1).rstrip('0').rstrip('.') if '.' in m.group(1) else m.group(1)} in"),
+    ]:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return formatter(match)
+    return ""
+
+
+def _extract_wattage_text(text: str) -> str:
+    for pattern in [
+        r"\bmax parsed wattage\s+([0-9]+(?:\.[0-9]+)?)\s*W\b",
+        r"\bload target\s+([0-9]+(?:\.[0-9]+)?)\s*W\b",
+        r"\b([0-9]+(?:\.[0-9]+)?)\s*W(?:att)?\b",
+    ]:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return f"{_format_number(match.group(1))}W"
+    return ""
+
+
+def _extract_lumens_text(text: str) -> str:
+    patterns = [
+        r"\bbrightness target\s+([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:lm|lumens)\b",
+        r"\b([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:lm|lumens)\b",
+        r"\b([0-9][0-9,]*(?:\.[0-9]+)?)\s+lumen(?:s)?\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            trailing = text[match.end(): match.end() + 8]
+            if re.match(r"\s*/\s*w", trailing, flags=re.IGNORECASE):
+                continue
+            numeric = float(match.group(1).replace(",", ""))
+            if numeric < 300 or numeric > 200000:
+                continue
+            return f"{_format_number(match.group(1))}lm"
+    return ""
+
+
+def _extract_cct_text(text: str) -> str:
+    lowered = text.lower()
+    values: list[str] = []
+    for match in re.finditer(r"\b((?:27|30|35|40|50|65)00|\d{4})\s*(?:K|Kelvin)\b", text, flags=re.IGNORECASE):
+        value = f"{match.group(1)}K".upper()
+        if value not in values:
+            values.append(value)
+    if values:
+        return "/".join(values[:4])
+    if "5cct" in lowered:
+        return "5CCT"
+    if "3cct" in lowered:
+        return "3CCT"
+    if "selectable cct" in lowered or "switchable cct" in lowered:
+        return "Selectable CCT"
+    return ""
+
+
+def _infer_form_factor(category: Category, text: str) -> str:
+    lowered = text.lower()
+    category_text = category.run_name.replace("_", " ").lower()
+    combined = f"{lowered} {category_text}"
+    labels = [
+        (("vapor tight", "vaportight", "vapor proof"), "LED Vapor Tight Fixture"),
+        (("wraparound", "wrap around"), "LED Wraparound Fixture"),
+        (("troffer", "center basket"), "LED Troffer"),
+        (("flat panel", "panel"), "LED Panel"),
+        (("linear high bay",), "Linear High Bay"),
+        (("high bay",), "LED High Bay"),
+        (("shop light",), "LED Shop Light"),
+        (("strip light", "striplight"), "LED Strip Light"),
+        (("canopy",), "LED Canopy Light"),
+        (("wall pack",), "LED Wall Pack"),
+        (("flood",), "LED Flood Light"),
+        (("emergency", "exit sign"), "Emergency/Exit Fixture"),
+    ]
+    for needles, label in labels:
+        if any(needle in combined for needle in needles):
+            return label
+    category_name = _title_name_component(category.run_name.replace("_", " "))
+    if "fixture" in category_name.lower() or "light" in category_name.lower():
+        return category_name
+    return f"LED {category_name} Fixture"
+
+
+def _extract_name_features(text: str) -> list[str]:
+    lowered = text.lower()
+    features: list[str] = []
+    for needle, label in [
+        ("selectable wattage", "Selectable Wattage"),
+        ("wattage selectable", "Selectable Wattage"),
+        ("multi-wattage", "Selectable Wattage"),
+        ("emergency backup", "Emergency Backup"),
+        ("emergency battery", "Emergency Backup"),
+        ("motion sensor", "Motion Sensor"),
+        ("daylight sensor", "Daylight Sensor"),
+        ("smart", "Smart Connected"),
+        ("linkable", "Linkable"),
+        ("0-10v", "0-10V Dimming"),
+        ("0-10 v", "0-10V Dimming"),
+        ("triac", "TRIAC Dimming"),
+        ("frosted lens", "Frosted Lens"),
+        ("prismatic lens", "Prismatic Lens"),
+        ("polycarbonate lens", "Polycarbonate Lens"),
+        ("daisy chain", "Daisy-Chain Ready"),
+        ("daisy-chain", "Daisy-Chain Ready"),
+    ]:
+        if needle in lowered and label not in features:
+            features.append(label)
+    ip_match = re.search(r"\bIP\s*([0-9]{2})\b", text, flags=re.IGNORECASE)
+    if ip_match:
+        features.append(f"IP{ip_match.group(1)}")
+    return features
+
+
+def _pm_recommendation_name(category: Category, row: dict[str, Any]) -> str:
+    action = _controlled_action(row)
+    text = _step1_name_text(row)
+    form_factor = _infer_form_factor(category, text)
+    size = _extract_size_token(text)
+    name_base = f"{size} {form_factor}".strip() if size and size.lower() not in form_factor.lower() else form_factor
+    parts = _dedupe_name_parts(
+        [
+            _title_name_component(name_base),
+            _extract_wattage_text(text),
+            _extract_lumens_text(text),
+            _extract_cct_text(text),
+            *_extract_name_features(text),
+        ]
+    )
+    body = ", ".join(parts) if parts else _title_name_component(form_factor)
+    if any(marker in body.lower() for marker in SOURCE_NAME_MARKERS):
+        body = _title_name_component(form_factor)
+    return f"{action}: {body}"
 
 
 def _related_rank(category: Category, row: dict[str, Any]) -> int:
@@ -764,7 +1009,7 @@ def _write_summary(workbook, category: Category, data: dict[str, Any]) -> None:
     ws.column_dimensions["B"].width = 80
 
 
-def _write_source_rows(paths: ProjectPaths, workbook, rows: list[dict[str, Any]]) -> list[str]:
+def _write_source_rows(paths: ProjectPaths, workbook, category: Category, rows: list[dict[str, Any]]) -> list[str]:
     ws = workbook["Recommendations"]
     image_status: list[str] = []
     for index, row in enumerate(rows, start=2):
@@ -775,6 +1020,7 @@ def _write_source_rows(paths: ProjectPaths, workbook, rows: list[dict[str, Any]]
         values = [
             None,
             row.get("subcategory"),
+            _pm_recommendation_name(category, row),
             row.get("recommendation"),
             row.get("priority"),
             row.get("confidence"),
@@ -789,12 +1035,12 @@ def _write_source_rows(paths: ProjectPaths, workbook, rows: list[dict[str, Any]]
             cell.value = value
             cell.alignment = Alignment(wrap_text=True, vertical="top")
         if row.get("source_url"):
-            ws.cell(index, 7).hyperlink = row["source_url"]
-            ws.cell(index, 7).style = "Hyperlink"
+            ws.cell(index, 8).hyperlink = row["source_url"]
+            ws.cell(index, 8).style = "Hyperlink"
     return image_status
 
 
-def _write_amazon_rows(paths: ProjectPaths, workbook, rows: list[dict[str, Any]]) -> list[str]:
+def _write_amazon_rows(paths: ProjectPaths, workbook, category: Category, rows: list[dict[str, Any]]) -> list[str]:
     ws = workbook["Amazon Recommendations"]
     image_status: list[str] = []
     for index, row in enumerate(rows, start=2):
@@ -805,6 +1051,7 @@ def _write_amazon_rows(paths: ProjectPaths, workbook, rows: list[dict[str, Any]]
         values = [
             None,
             row.get("subcategory"),
+            _pm_recommendation_name(category, row),
             row.get("recommendation"),
             row.get("priority"),
             row.get("confidence"),
@@ -820,8 +1067,8 @@ def _write_amazon_rows(paths: ProjectPaths, workbook, rows: list[dict[str, Any]]
             cell.value = value
             cell.alignment = Alignment(wrap_text=True, vertical="top")
         if row.get("review_url"):
-            ws.cell(index, 10).hyperlink = row["review_url"]
-            ws.cell(index, 10).style = "Hyperlink"
+            ws.cell(index, 11).hyperlink = row["review_url"]
+            ws.cell(index, 11).style = "Hyperlink"
     return image_status
 
 
@@ -944,8 +1191,8 @@ def generate_gap_workbook(paths: ProjectPaths, category: Category, force_refresh
         _clear_true_gap_workbook(workbook)
         image_status = []
         _write_summary(workbook, category, data)
-        image_status.extend(_write_source_rows(paths, workbook, data["source_rows"]))
-        image_status.extend(_write_amazon_rows(paths, workbook, data["amazon_rows"]))
+        image_status.extend(_write_source_rows(paths, workbook, category, data["source_rows"]))
+        image_status.extend(_write_amazon_rows(paths, workbook, category, data["amazon_rows"]))
         _write_source_audit(workbook, category, data)
         write_line_review_sheet(workbook, line_review_context)
 

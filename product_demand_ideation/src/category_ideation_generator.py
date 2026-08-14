@@ -1170,8 +1170,8 @@ def generate_category_ideation_workbook(root: Path | str) -> tuple[Path, list[st
         existing["_clear_true_gap_workbook"](workbook)
         image_status = []
         existing["_write_summary"](workbook, category, data)
-        image_status.extend(existing["_write_source_rows"](paths, workbook, data["source_rows"]))
-        image_status.extend(existing["_write_amazon_rows"](paths, workbook, data["amazon_rows"]))
+        image_status.extend(existing["_write_source_rows"](paths, workbook, category, data["source_rows"]))
+        image_status.extend(existing["_write_amazon_rows"](paths, workbook, category, data["amazon_rows"]))
         existing["_write_source_audit"](workbook, category, data)
         existing["write_line_review_sheet"](workbook, line_review_context)
 
