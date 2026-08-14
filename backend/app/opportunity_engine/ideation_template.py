@@ -792,7 +792,7 @@ def _sunco_reference_from_coverage(item: dict[str, Any]) -> dict[str, str] | Non
 def _strategy_from_classification(value: str | None) -> str:
     text = (value or "").lower()
     if "hold" in text:
-        return ACTION_HOLD
+        return ACTION_CONCEPT_REVIEW
     if "concept review" in text or "strategic outlier" in text or "watchlist" in text or "possible feature gap" in text:
         return ACTION_CONCEPT_REVIEW
     if "revision" in text or "merchandising" in text or "existing sunco coverage" in text or "coverage exists" in text or "defend/optimize" in text or "sunco amazon incumbent" in text:
@@ -852,6 +852,227 @@ def _ideation_name_with_action(item: dict[str, Any], strategy: str) -> str:
     if body:
         return f"{strategy}: {body}"
     return strategy
+
+
+SOURCE_NAME_MARKERS = (
+    "amazon stackline opportunity",
+    "amazon-channel recommendation",
+    "stackline/amazon leader",
+    "stackline amazon leader",
+    "amazon recommendation",
+    "source audit",
+    "step 1 evidence",
+    "step 1 ecommerce",
+    "competitor evidence",
+    "home depot marketplace",
+)
+
+GENERIC_NAME_MARKERS = (
+    "target unless step 1",
+    "only if step 1",
+    "named in step 1 evidence",
+    "by selected product form factor",
+    "by design size",
+    "by kit type",
+    "lumen output target",
+    "cct target",
+    "wattage target",
+    "integrated led wattage target",
+    "total fixture output defined",
+    "defined by included bulb",
+    "defined by product design",
+)
+
+
+def _title_name_component(value: str) -> str:
+    acronyms = {
+        "led": "LED",
+        "cct": "CCT",
+        "cri": "CRI",
+        "ip": "IP",
+        "ul": "UL",
+        "etl": "ETL",
+        "fcc": "FCC",
+        "0-10v": "0-10V",
+        "triac": "TRIAC",
+        "ft": "ft",
+        "in": "in",
+        "lm": "lm",
+    }
+    words = re.split(r"(\s+|/|-)", value.strip())
+    output: list[str] = []
+    for word in words:
+        key = word.lower()
+        if not word or word.isspace() or word in {"/", "-"}:
+            output.append(word)
+        elif key in acronyms:
+            output.append(acronyms[key])
+        elif re.fullmatch(r"\d+(?:\.\d+)?(?:x\d+(?:\.\d+)?|ft|in|w|k|lm)?", key):
+            output.append(word)
+        elif re.fullmatch(r"\d+cct", key):
+            output.append(word.upper())
+        else:
+            output.append(word[:1].upper() + word[1:].lower())
+    text = "".join(output)
+    text = re.sub(r"\bLed\b", "LED", text)
+    text = re.sub(r"\bCct\b", "CCT", text)
+    text = re.sub(r"\bIp(\d+)\b", r"IP\1", text)
+    text = re.sub(r"\b0-10v\b", "0-10V", text, flags=re.IGNORECASE)
+    return text
+
+
+def _clean_name_component(value: Any, *, allow_generic: bool = False) -> str:
+    text = _cell_text(value)
+    if not text:
+        return ""
+    lowered = text.lower()
+    if any(marker in lowered for marker in SOURCE_NAME_MARKERS):
+        return ""
+    if not allow_generic and any(marker in lowered for marker in GENERIC_NAME_MARKERS):
+        return ""
+    if _is_pack_count_phrase(text) or _is_pack_count_only_recommendation(text):
+        return ""
+    text = _strip_action_prefix(text)
+    text = _clean_pack_count_recommendation(text)
+    text = re.sub(r"\s*,\s*", ", ", text)
+    text = re.sub(r"\s*;\s*", ", ", text)
+    text = re.sub(r"\btarget\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" ,;:-")
+    if not text or text.lower() in {"yes", "no", "n/a", "none", "optional"}:
+        return ""
+    return text
+
+
+def _dedupe_name_parts(parts: list[str]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        normalized = re.sub(r"[^a-z0-9]+", "", part.lower())
+        if not normalized or normalized in seen:
+            continue
+        if any(normalized in re.sub(r"[^a-z0-9]+", "", existing.lower()) for existing in output):
+            continue
+        seen.add(normalized)
+        output.append(part)
+    return output
+
+
+def _sku_defining_wattage(value: Any) -> str:
+    return _extract_wattage_text(_cell_text(value)) or ""
+
+
+def _sku_defining_lumens(value: Any) -> str:
+    return _extract_lumens_text(_cell_text(value)) or ""
+
+
+def _sku_defining_cct(enriched: dict[str, Any]) -> str:
+    primary = _clean_name_component(enriched.get("cct_primary"))
+    if primary:
+        return primary
+    selectable = _cell_text(enriched.get("selectable_cct")).lower()
+    if selectable.startswith("yes") or "selectable cct" in selectable or "switchable cct" in selectable:
+        return "Selectable CCT"
+    return ""
+
+
+def _sku_defining_yes_feature(value: Any, label: str) -> str:
+    text = _cell_text(value)
+    lowered = text.lower()
+    if not text or lowered in {"no", "n/a", "none"}:
+        return ""
+    if "only if" in lowered or "unless" in lowered or "optional" in lowered:
+        return ""
+    if lowered.startswith("yes") or label.lower() in lowered:
+        return label
+    return ""
+
+
+def _sku_defining_dimming(value: Any) -> str:
+    text = _cell_text(value)
+    lowered = text.lower()
+    if not text or "unless" in lowered:
+        return ""
+    if "0-10v" in lowered or "0-10 v" in lowered:
+        return "0-10V Dimming"
+    if "triac" in lowered:
+        return "TRIAC Dimming"
+    if "dimming" in lowered and not any(marker in lowered for marker in GENERIC_NAME_MARKERS):
+        return _title_name_component(_clean_name_component(text))
+    return ""
+
+
+def _sku_defining_ip_rating(value: Any) -> str:
+    text = _cell_text(value)
+    match = re.search(r"\bIP\s*([0-9]{2})\b", text, flags=re.IGNORECASE)
+    if match:
+        return f"IP{match.group(1)}"
+    return ""
+
+
+def _sku_defining_lens_housing_features(text: str) -> list[str]:
+    lowered = text.lower()
+    features: list[str] = []
+    for needle, label in [
+        ("frosted lens", "Frosted Lens"),
+        ("prismatic lens", "Prismatic Lens"),
+        ("clear lens", "Clear Lens"),
+        ("polycarbonate lens", "Polycarbonate Lens"),
+        ("acrylic lens", "Acrylic Lens"),
+        ("steel housing", "Steel Housing"),
+        ("aluminum housing", "Aluminum Housing"),
+        ("die-cast housing", "Die-Cast Housing"),
+        ("vapor tight housing", "Vapor Tight Housing"),
+        ("vaportight housing", "Vapor Tight Housing"),
+        ("daisy chain", "Daisy-Chain Ready"),
+        ("daisy-chain", "Daisy-Chain Ready"),
+    ]:
+        if needle in lowered and label not in features:
+            features.append(label)
+    return features
+
+
+def _category_name_fallback(category: Category, profile: dict[str, Any]) -> str:
+    mode = _profile_attribute_mode(profile)
+    category_name = _title_name_component(category.run_name.replace("_", " "))
+    if mode == "decorative_fixture":
+        return f"{category_name} Fixture"
+    if "fixture" in category_name.lower() or "light" in category_name.lower():
+        return category_name
+    return f"LED {category_name} Fixture"
+
+
+def _sku_defining_ideation_name(
+    category: Category,
+    item: dict[str, Any],
+    enriched: dict[str, Any],
+    profile: dict[str, Any],
+) -> str:
+    strategy = enriched.get("strategy") if enriched.get("strategy") in {ACTION_NPD, ACTION_REVISION, ACTION_CONCEPT_REVIEW} else ACTION_CONCEPT_REVIEW
+    form_factor = _clean_name_component(enriched.get("size_form_factor"), allow_generic=True)
+    if not form_factor or any(marker in form_factor.lower() for marker in SOURCE_NAME_MARKERS):
+        form_factor = _category_name_fallback(category, profile)
+    form_factor = _title_name_component(form_factor.replace(", LED", " LED").replace(", led", " LED"))
+
+    parts = [
+        form_factor,
+        _sku_defining_wattage(enriched.get("wattage_primary")),
+        _sku_defining_lumens(enriched.get("lumens_target")),
+        _sku_defining_cct(enriched),
+    ]
+    features = [
+        _sku_defining_yes_feature(enriched.get("selectable_wattage"), "Selectable Wattage"),
+        _sku_defining_yes_feature(enriched.get("emergency_battery"), "Emergency Backup"),
+        _sku_defining_yes_feature(enriched.get("motion_sensor"), "Motion Sensor"),
+        _sku_defining_yes_feature(enriched.get("daylight_sensor_auto_dimming"), "Daylight Sensor"),
+        _sku_defining_yes_feature(enriched.get("smart_connected"), "Smart Connected"),
+        _sku_defining_yes_feature(enriched.get("linkable"), "Linkable"),
+        _sku_defining_dimming(enriched.get("dimming_type")),
+        _sku_defining_ip_rating(enriched.get("ip_rating")),
+    ]
+    features.extend(_sku_defining_lens_housing_features(_evidence_text(item)))
+    clean_parts = _dedupe_name_parts([part for part in parts + features if part])
+    body = ", ".join(clean_parts) or _category_name_fallback(category, profile)
+    return f"{strategy}: {body}"
 
 
 def _revision_change_summary(item: dict[str, Any], enriched: dict[str, Any]) -> str | None:
@@ -1750,6 +1971,7 @@ def _enrich_item(
             enriched[key] = value
     enriched["target_msrp"] = _numeric_pricing_cell(enriched.get("target_msrp"))
     enriched["target_vendor_cost"] = _numeric_pricing_cell(enriched.get("target_vendor_cost"))
+    enriched["ideation_name"] = _sku_defining_ideation_name(category, item, enriched, profile)
     enriched["research_notes"] = _build_research_notes(item, enriched, profile, pricing, link_validation)
     enriched["_link_validation"] = link_validation
     return enriched
