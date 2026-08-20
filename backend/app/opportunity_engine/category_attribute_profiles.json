@@ -90,6 +90,138 @@
       "stackline_data": "Yes"
     }
   },
+  "ceiling_fan": {
+    "notes": "Defaults used for ceiling fan concepts. Fan categories stay separate from integrated LED luminaire defaults unless the concept includes a light-kit SKU.",
+    "attribute_mode": "ceiling_fan",
+    "form_factor_terms": [
+      "ceiling fan",
+      "residential fan",
+      "commercial fan",
+      "fan light kit",
+      "low profile fan",
+      "downrod fan"
+    ],
+    "sku_split_attributes": [
+      "blade_span",
+      "blade_count",
+      "mounting_type",
+      "control_type",
+      "finish_color"
+    ],
+    "max_sku_candidates_per_row": 4,
+    "defaults": {
+      "voltage": "120V",
+      "selectable_wattage": "No",
+      "selectable_cct": "Light-kit only",
+      "cri": null,
+      "dimmable": "Light-kit only",
+      "dimming_type": "Remote/control type by SKU",
+      "frequency": "60Hz",
+      "driver_type": "Fan motor target by blade span and price tier",
+      "ip_rating": null,
+      "moisture_rating": "Dry rated indoor use",
+      "indoor_outdoor_use": "Indoor",
+      "wiring_type": "Hardwired ceiling fan electrical box",
+      "emergency_battery": "No",
+      "run_time": null,
+      "charge_time": null,
+      "switching_time": null,
+      "motion_sensor": "No",
+      "motion_duration": null,
+      "daylight_sensor_auto_dimming": "No",
+      "smart_connected": "Smart-control variant only",
+      "linkable": "No",
+      "bulb_base_type": null,
+      "bulb_shape": null,
+      "beam_angle": null,
+      "target_margin_shopify": "60% target",
+      "target_margin_amazon": "70% target",
+      "cost_type": "Landed",
+      "certifications": "ETL or UL motor/electrical listing; FCC where remote or smart controls apply",
+      "lifetime_hours": "Motor/electrical life target by vendor platform",
+      "warranty": "Limited lifetime motor / 3 year parts target",
+      "priority_channels": "Amazon and Sunco.com; staged channel test if category fit is unclear",
+      "stackline_data": "Yes"
+    }
+  },
+  "residential_fans": {
+    "inherits": "ceiling_fan",
+    "attribute_mode": "ceiling_fan",
+    "keywords": [
+      "ceiling fan",
+      "residential fan",
+      "fan light kit",
+      "low profile",
+      "flush mount",
+      "downrod"
+    ],
+    "defaults": {
+      "subcategory": "Residential Fans"
+    }
+  },
+  "commercial_fans": {
+    "inherits": "ceiling_fan",
+    "attribute_mode": "ceiling_fan",
+    "keywords": [
+      "commercial fan",
+      "industrial fan",
+      "destratification fan",
+      "high cfm"
+    ],
+    "defaults": {
+      "subcategory": "Commercial Fans",
+      "indoor_outdoor_use": "Commercial indoor or covered industrial use by rating",
+      "warranty": "5 year motor target"
+    }
+  },
+  "bathroom_fans": {
+    "notes": "Defaults used for bathroom exhaust fan concepts. Keep this category separate from residential ceiling fans and decorative ceiling fixtures.",
+    "attribute_mode": "bathroom_fan",
+    "form_factor_terms": [
+      "bathroom fan",
+      "exhaust fan",
+      "ventilation fan",
+      "humidity sensor",
+      "fan with light"
+    ],
+    "sku_split_attributes": [
+      "output_tier",
+      "control_type",
+      "finish_color"
+    ],
+    "max_sku_candidates_per_row": 4,
+    "defaults": {
+      "subcategory": "Bathroom Fans",
+      "voltage": "120V",
+      "selectable_wattage": "No",
+      "selectable_cct": "Light-kit only",
+      "cri": null,
+      "dimmable": "Light-kit only",
+      "dimming_type": "Humidity sensor, motion sensor, or wall-control behavior by SKU",
+      "frequency": "60Hz",
+      "driver_type": "Exhaust fan motor",
+      "ip_rating": null,
+      "moisture_rating": "Damp rated bathroom use",
+      "indoor_outdoor_use": "Indoor bathroom",
+      "wiring_type": "Hardwired",
+      "emergency_battery": "No",
+      "motion_sensor": "Humidity or occupancy sensor variant only",
+      "daylight_sensor_auto_dimming": "No",
+      "smart_connected": "Smart-control variant only",
+      "linkable": "No",
+      "bulb_base_type": null,
+      "bulb_shape": null,
+      "beam_angle": null,
+      "target_margin_shopify": "60% target",
+      "target_margin_amazon": "70% target",
+      "cost_type": "Landed",
+      "certifications": "UL or ETL bathroom exhaust fan listing; Energy Star where market/channel requires it; FCC where controls apply",
+      "lifetime_hours": "Motor life target by vendor platform",
+      "warranty": "3 year target",
+      "priority_channels": "Amazon and Sunco.com; staged channel test if category fit is unclear",
+      "stackline_data": "Yes"
+    }
+  },
   "chandeliers": {
     "inherits": "decorative_fixture",
     "attribute_mode": "decorative_fixture",

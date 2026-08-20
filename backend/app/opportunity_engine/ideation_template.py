@@ -118,6 +118,25 @@ ACTION_SORT_ORDER = {
     ACTION_HOLD: 3,
 }
 
+REFERENCE_SKU_STOPWORDS = {
+    "active",
+    "amazon",
+    "case",
+    "channel",
+    "check",
+    "coverage",
+    "example",
+    "feature",
+    "listing",
+    "product",
+    "reference",
+    "shopify",
+    "source",
+    "sku",
+    "sunco",
+    "title",
+}
+
 
 def _clean_prd_requirement_text(key: str, value: Any) -> Any:
     if key not in PRD_SPEC_COLUMNS or not isinstance(value, str):
@@ -634,6 +653,27 @@ def _canonical_line_review_reference(sku: str, lookup: dict[str, dict[str, Any]]
     return None
 
 
+def _looks_like_sunco_reference_sku(value: Any) -> bool:
+    text = _cell_text(value)
+    if not text:
+        return False
+    lowered = re.sub(r"[^a-z0-9]+", "", text.lower())
+    if lowered in REFERENCE_SKU_STOPWORDS:
+        return False
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9_./-]{2,}", text, flags=re.IGNORECASE):
+        return False
+    compact = re.sub(r"[^A-Za-z0-9]", "", text)
+    if len(compact) < 5 or not re.search(r"\d", compact):
+        return False
+    if re.fullmatch(r"B0[A-Z0-9]{8}", compact, flags=re.IGNORECASE):
+        return False
+    has_sku_shape = (
+        any(delimiter in text for delimiter in ("-", "_", "."))
+        or bool(re.search(r"[A-Z]{2,}\d|\d[A-Z]{2,}", compact, flags=re.IGNORECASE))
+    )
+    return has_sku_shape
+
+
 def _append_unique(existing: str | None, new: str | None) -> str | None:
     if not new:
         return existing
@@ -779,7 +819,7 @@ def _sunco_reference_from_coverage(item: dict[str, Any]) -> dict[str, str] | Non
         return None
     sku = match.group(1).strip()
     title = match.group(2).strip()
-    if sku.lower() in {"active", "amazon", "shopify"}:
+    if not _looks_like_sunco_reference_sku(sku):
         return None
     verified_reference = _canonical_line_review_reference(sku, item.get("_line_review_sku_lookup") or {})
     if item.get("_line_review_sku_lookup") and not verified_reference:
@@ -1058,6 +1098,12 @@ def _sku_defining_lens_housing_features(text: str) -> list[str]:
 def _category_name_fallback(category: Category, profile: dict[str, Any]) -> str:
     mode = _profile_attribute_mode(profile)
     category_name = _title_name_component(category.run_name.replace("_", " "))
+    if mode == "ceiling_fan":
+        if "ceiling fan" in category_name.lower():
+            return category_name
+        return "Ceiling Fan"
+    if mode == "bathroom_fan":
+        return "Bathroom Exhaust Fan"
     if mode == "decorative_fixture":
         return f"{category_name} Fixture"
     if "fixture" in category_name.lower() or "light" in category_name.lower():
@@ -1097,6 +1143,8 @@ def _sku_defining_ideation_name(
         _sku_defining_ip_rating(enriched.get("ip_rating")),
     ]
     features.extend(_sku_defining_lens_housing_features(_evidence_text(item)))
+    if _profile_attribute_mode(profile) in {"ceiling_fan", "bathroom_fan"}:
+        features.extend(_sku_defining_fan_features(_evidence_text(item), enriched, profile))
     clean_parts = _dedupe_name_parts([part for part in parts + features if part])
     body = ", ".join(clean_parts) or _category_name_fallback(category, profile)
     return f"{strategy}: {body}"
@@ -1351,6 +1399,230 @@ def _apply_integrated_led_enrichment(enriched: dict[str, Any], category: Categor
         enriched["emergency_battery"] = "Yes - emergency backup named in Step 1 evidence"
     if "motion" in lowered or "sensor" in lowered:
         enriched["motion_sensor"] = "Yes - sensor/control feature named in Step 1 evidence"
+
+
+def _extract_blade_span_values(text: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(
+        r"\b([2-8][0-9](?:\.\d+)?)\s*(?:in|inch|inches|\")?\s*(?:ceiling\s*)?(?:fan|blade|span)\b|"
+        r"\b(?:fan|blade|span)\s*(?:diameter|size|span)?\s*[:=]?\s*([2-8][0-9](?:\.\d+)?)\s*(?:in|inch|inches|\")\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        raw = match.group(1) or match.group(2)
+        if not raw:
+            continue
+        number = float(raw)
+        value = f"{number:g} in"
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _extract_blade_count_values(text: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(r"\b([2-9])\s*(?:-| )?blade\b|\b([2-9])\s*blades\b", text, flags=re.IGNORECASE):
+        raw = match.group(1) or match.group(2)
+        if raw and raw not in values:
+            values.append(raw)
+    return values
+
+
+def _extract_cfm_text(text: str) -> str | None:
+    values: list[str] = []
+    for match in re.finditer(r"\b([0-9][0-9,]*(?:\.\d+)?)\s*cfm\b", text, flags=re.IGNORECASE):
+        numeric = _to_float(match.group(1))
+        if numeric is None or numeric < 20 or numeric > 20000:
+            continue
+        value = f"{numeric:,.0f} CFM"
+        if value not in values:
+            values.append(value)
+    return " / ".join(values[:4]) if values else None
+
+
+def _fan_has_light_kit(text: str) -> bool:
+    lowered = text.lower()
+    if re.search(r"\b(?:no|without|not\s+including|does\s+not\s+include|do\s+not\s+include)\s+(?:a\s+)?(?:light|light\s+kit)\b", lowered):
+        return False
+    return any(
+        phrase in lowered
+        for phrase in [
+            "light kit",
+            "fan light",
+            "with light",
+            "with led",
+            "integrated led light",
+            "led light kit",
+        ]
+    )
+
+
+def _infer_ceiling_fan_form_factor(item: dict[str, Any], text: str, category: Category) -> str:
+    spans = _extract_blade_span_values(text)
+    blade_counts = _extract_blade_count_values(text)
+    parts = []
+    if spans:
+        parts.append("/".join(spans))
+    if blade_counts:
+        parts.append("/".join(f"{value}-blade" for value in blade_counts[:2]))
+    category_label = "commercial ceiling fan" if "commercial" in category.slug else "ceiling fan"
+    parts.append(category_label)
+    if _fan_has_light_kit(text):
+        parts.append("with light kit")
+    elif "light kit adaptable" in text.lower() or "light-kit adaptable" in text.lower():
+        parts.append("light-kit adaptable")
+    return " ".join(part for part in parts if part)
+
+
+def _infer_fan_mounting(text: str, default: str | None = None) -> str:
+    lowered = text.lower()
+    if "flush mount" in lowered or "low profile" in lowered or "hugger" in lowered:
+        return "Flush / low-profile ceiling mount"
+    if "downrod" in lowered or "down rod" in lowered:
+        return "Downrod ceiling mount"
+    if "dual mount" in lowered:
+        return "Dual-mount ceiling fan"
+    return default or "Ceiling fan-rated junction box mount"
+
+
+def _fan_controls(text: str) -> tuple[str | None, str | None, str | None]:
+    lowered = text.lower()
+    remote = "Remote control" if "remote" in lowered else None
+    smart = "Yes - smart fan controls named in Step 1 evidence" if "smart" in lowered or "wifi" in lowered or "wi-fi" in lowered else None
+    reversible = "Reversible motor" if "reversible" in lowered else None
+    return remote, smart, reversible
+
+
+def _fan_motor_type(text: str, default: str | None = None) -> str:
+    lowered = text.lower()
+    if "dc motor" in lowered or re.search(r"\bdc\b", lowered):
+        return "DC motor target"
+    if "ac motor" in lowered or re.search(r"\bac\b", lowered):
+        return "AC motor target"
+    return default or "Fan motor target by blade span and price tier"
+
+
+def _apply_ceiling_fan_enrichment(enriched: dict[str, Any], category: Category, item: dict[str, Any], text: str, profile: dict[str, Any]) -> None:
+    lowered = text.lower()
+    light_kit = _fan_has_light_kit(text)
+    cct_primary, cct_max = _extract_cct_text(text)
+    remote, smart, reversible = _fan_controls(text)
+    enriched["size_form_factor"] = _infer_ceiling_fan_form_factor(item, text, category)
+    enriched["mounting_type"] = _infer_fan_mounting(text, enriched.get("mounting_type"))
+    enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
+    enriched["material"] = _infer_material(text) or enriched.get("material")
+    enriched["wattage_primary"] = _extract_wattage_text(text) or enriched.get("wattage_primary") or _fan_motor_type(text)
+    enriched["wattage_max"] = enriched.get("wattage_max") or enriched["wattage_primary"]
+    enriched["driver_type"] = _fan_motor_type(text, enriched.get("driver_type"))
+    enriched["wiring_type"] = "Hardwired ceiling fan electrical box"
+    enriched["power_factor"] = None
+    enriched["efficiency"] = _extract_cfm_text(text) or "Airflow target by blade span and motor type"
+    enriched["beam_angle"] = None
+    enriched["linkable"] = "No"
+    enriched["bulb_base_type"] = None
+    enriched["bulb_shape"] = None
+    if light_kit:
+        enriched["cct_primary"] = cct_primary or enriched.get("cct_primary") or "Light-kit CCT target"
+        enriched["cct_max"] = cct_max or enriched.get("cct_max")
+        enriched["lumens_target"] = _extract_lumens_text(text) or enriched.get("lumens_target") or "Light-kit lumen target"
+        enriched["dimmable"] = enriched.get("dimmable") or "Yes for light-kit variants"
+        if cct_primary and ("selectable" in cct_primary.lower() or "cct" in cct_primary.lower()):
+            enriched["selectable_cct"] = "Yes"
+    else:
+        enriched["cct_primary"] = None
+        enriched["cct_max"] = None
+        enriched["selectable_cct"] = "Light-kit only"
+        enriched["lumens_target"] = None
+        enriched["dimmable"] = "Light-kit only"
+    if remote:
+        enriched["dimming_type"] = remote
+    if smart:
+        enriched["smart_connected"] = smart
+    if reversible:
+        enriched["motion_sensor"] = reversible
+    if "damp" in lowered:
+        enriched["moisture_rating"] = "Damp rated"
+    elif "wet" in lowered or "outdoor" in lowered:
+        enriched["moisture_rating"] = "Wet rated"
+        enriched["indoor_outdoor_use"] = "Indoor/outdoor where rated"
+    else:
+        enriched["moisture_rating"] = enriched.get("moisture_rating") or "Dry rated indoor use"
+    enriched["operating_temperature"] = enriched.get("operating_temperature") or "Residential indoor ambient operating range"
+
+
+def _infer_bathroom_fan_form_factor(text: str) -> str:
+    cfm = _extract_cfm_text(text)
+    pieces = [cfm, "bathroom exhaust fan"]
+    if "humidity" in text.lower():
+        pieces.append("humidity sensor")
+    if _fan_has_light_kit(text):
+        pieces.append("with light")
+    return " ".join(part for part in pieces if part)
+
+
+def _extract_sone_text(text: str) -> str | None:
+    match = re.search(r"\b([0-9](?:\.\d+)?)\s*sone?s?\b", text, flags=re.IGNORECASE)
+    return f"{match.group(1)} sones" if match else None
+
+
+def _apply_bathroom_fan_enrichment(enriched: dict[str, Any], category: Category, item: dict[str, Any], text: str, profile: dict[str, Any]) -> None:
+    light_kit = _fan_has_light_kit(text)
+    cct_primary, cct_max = _extract_cct_text(text)
+    enriched["size_form_factor"] = _infer_bathroom_fan_form_factor(text)
+    enriched["mounting_type"] = "Ceiling exhaust fan mount"
+    enriched["wiring_type"] = "Hardwired"
+    enriched["driver_type"] = "Exhaust fan motor"
+    enriched["wattage_primary"] = _extract_wattage_text(text) or enriched.get("wattage_primary") or "Fan motor wattage by airflow target"
+    enriched["wattage_max"] = enriched.get("wattage_max") or enriched["wattage_primary"]
+    enriched["efficiency"] = _extract_sone_text(text) or "Airflow and sound target"
+    enriched["moisture_rating"] = "Damp rated bathroom use"
+    enriched["indoor_outdoor_use"] = "Indoor bathroom"
+    enriched["operating_temperature"] = "Residential indoor bathroom ambient range"
+    enriched["linkable"] = "No"
+    enriched["beam_angle"] = None
+    enriched["bulb_base_type"] = None
+    enriched["bulb_shape"] = None
+    if light_kit:
+        enriched["cct_primary"] = cct_primary or enriched.get("cct_primary") or "Light-kit CCT target"
+        enriched["cct_max"] = cct_max or enriched.get("cct_max")
+        enriched["lumens_target"] = _extract_lumens_text(text) or enriched.get("lumens_target") or "Light-kit lumen target"
+        enriched["dimmable"] = enriched.get("dimmable") or "Yes for light-kit variants"
+    else:
+        enriched["cct_primary"] = None
+        enriched["cct_max"] = None
+        enriched["selectable_cct"] = "Light-kit only"
+        enriched["lumens_target"] = None
+        enriched["dimmable"] = "Light-kit only"
+    if "humidity" in text.lower():
+        enriched["motion_sensor"] = "Humidity sensor target"
+
+
+def _sku_defining_fan_features(text: str, enriched: dict[str, Any], profile: dict[str, Any]) -> list[str]:
+    lowered = text.lower()
+    features: list[str] = []
+    has_light_kit = _fan_has_light_kit(text)
+    for needle, label in [
+        ("dc motor", "DC Motor"),
+        ("remote", "Remote Control"),
+        ("reversible", "Reversible Motor"),
+        ("light kit", "Light Kit"),
+        ("with light", "Light Kit"),
+        ("low profile", "Low Profile"),
+        ("flush mount", "Flush Mount"),
+        ("downrod", "Downrod Mount"),
+        ("damp", "Damp Rated"),
+        ("wet", "Wet Rated"),
+        ("humidity", "Humidity Sensor"),
+    ]:
+        if label == "Light Kit" and not has_light_kit:
+            continue
+        if needle in lowered and label not in features:
+            features.append(label)
+    if _profile_attribute_mode(profile) == "bathroom_fan":
+        cfm = _extract_cfm_text(text)
+        if cfm:
+            features.insert(0, cfm)
+    return features
 
 
 def _infer_finish(text: str) -> str | None:
@@ -1688,6 +1960,10 @@ def _extract_finish_values(text: str) -> list[str]:
 def _sku_attribute_values(attribute: str, text: str) -> list[str]:
     if attribute == "light_count":
         return _extract_light_count_values(text)
+    if attribute == "blade_span":
+        return _extract_blade_span_values(text)
+    if attribute == "blade_count":
+        return _extract_blade_count_values(text)
     if attribute in {"fixture_size", "size"}:
         return _extract_sizes(text)
     if attribute == "panel_size":
@@ -1710,6 +1986,8 @@ def _sku_attribute_values(attribute: str, text: str) -> list[str]:
 def _sku_attribute_label(attribute: str, value: str) -> str:
     if attribute == "light_count":
         return f"{value}-light" if value.isdigit() else value
+    if attribute == "blade_count":
+        return f"{value}-blade" if value.isdigit() else value
     return value
 
 
@@ -1760,6 +2038,13 @@ def _candidate_field_overrides(
     if attribute_values.get("linear_size"):
         form_factor = _infer_integrated_form_factor({"name": category.run_name}, text, profile)
         overrides["size_form_factor"] = f"{attribute_values['linear_size']} {form_factor}"
+    if attribute_values.get("blade_span") or attribute_values.get("blade_count"):
+        parts = [
+            attribute_values.get("blade_span"),
+            _sku_attribute_label("blade_count", attribute_values.get("blade_count") or ""),
+            "ceiling fan" if _profile_attribute_mode(profile) == "ceiling_fan" else None,
+        ]
+        overrides["size_form_factor"] = " ".join(part for part in parts if part)
     if attribute_values.get("output_tier"):
         overrides["lumens_target"] = attribute_values["output_tier"]
     if attribute_values.get("lumens"):
@@ -1771,6 +2056,8 @@ def _candidate_field_overrides(
     control_type = attribute_values.get("control_type") or attribute_values.get("control")
     if control_type:
         if "dimming" in control_type.lower():
+            overrides["dimming_type"] = control_type
+        elif "remote" in control_type.lower():
             overrides["dimming_type"] = control_type
         elif "sensor" in control_type.lower():
             overrides["motion_sensor"] = f"Yes - {control_type} named in Step 1 evidence"
@@ -1964,6 +2251,10 @@ def _enrich_item(
         enriched["finish_color"] = _infer_finish(text) or enriched.get("finish_color")
         enriched["bulb_base_type"] = None
         enriched["bulb_shape"] = None
+    elif attribute_mode == "ceiling_fan":
+        _apply_ceiling_fan_enrichment(enriched, category, item, text, profile)
+    elif attribute_mode == "bathroom_fan":
+        _apply_bathroom_fan_enrichment(enriched, category, item, text, profile)
     else:
         _apply_integrated_led_enrichment(enriched, category, item, text, profile)
 

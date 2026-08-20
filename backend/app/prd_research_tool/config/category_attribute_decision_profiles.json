@@ -264,6 +264,279 @@
       ]
     },
     {
+      "id": "ceiling_fan_attributes",
+      "label": "Ceiling Fan Attribute Decisions",
+      "profile_ids": [
+        "ceiling_fan"
+      ],
+      "category_matches": [
+        "Residential Fans",
+        "Commercial Fans"
+      ],
+      "match_keywords": [
+        "ceiling fan",
+        "residential fan",
+        "commercial fan",
+        "fan light kit",
+        "blade span",
+        "dc motor",
+        "remote"
+      ],
+      "baseline_attributes": [
+        {
+          "attribute": "Product Boundary",
+          "label": "Ceiling fan, not bathroom exhaust fan",
+          "type": "Baseline",
+          "match_terms": [
+            "ceiling fan",
+            "residential fan",
+            "commercial fan"
+          ],
+          "recommendation": "Treat this as a ceiling-fan assortment decision. Do not use bathroom exhaust fan attributes unless Step 1 explicitly names ventilation, CFM exhaust, or sones.",
+          "notes": "This prevents fan categories from inheriting lighting-only integrated LED fixture assumptions."
+        }
+      ],
+      "attribute_groups": [
+        {
+          "attribute": "Blade Span / Format",
+          "type": "Feature",
+          "decision_question": "Which fan size and format should this SKU use?",
+          "values": [
+            {
+              "label": "Low-profile / flush mount",
+              "match_terms": [
+                "low profile",
+                "flush mount",
+                "hugger"
+              ],
+              "recommendation": "Use low-profile format when competitor demand points to bedrooms or low-ceiling residential rooms."
+            },
+            {
+              "label": "Downrod mount",
+              "match_terms": [
+                "downrod",
+                "down rod",
+                "dual mount"
+              ],
+              "recommendation": "Use downrod or dual-mount format when the target room size and competitor set lean toward standard residential ceiling-fan installs."
+            },
+            {
+              "label": "52 in blade span",
+              "match_terms": [
+                "52 in",
+                "52 inch",
+                "52\""
+              ],
+              "recommendation": "Use 52 in as a mainstream residential benchmark when competitor coverage supports a broad-room fan position."
+            }
+          ]
+        },
+        {
+          "attribute": "Motor / Controls",
+          "type": "Feature",
+          "decision_question": "Which motor and control package should be in scope?",
+          "values": [
+            {
+              "label": "DC motor",
+              "match_terms": [
+                "dc motor"
+              ],
+              "recommendation": "Use DC motor when competitor movement supports quieter, more efficient, premium positioning."
+            },
+            {
+              "label": "Remote control",
+              "match_terms": [
+                "remote",
+                "remote control"
+              ],
+              "recommendation": "Include remote control when the competitor set treats it as a mainstream buying filter."
+            },
+            {
+              "label": "Smart control",
+              "match_terms": [
+                "smart",
+                "wifi",
+                "wi-fi",
+                "app control"
+              ],
+              "recommendation": "Treat smart control as a variant-level premium feature unless direct evidence shows broad demand."
+            },
+            {
+              "label": "Reversible motor",
+              "match_terms": [
+                "reversible"
+              ],
+              "recommendation": "Include reversible motor when comparable top products use seasonal airflow control as a standard feature."
+            }
+          ]
+        },
+        {
+          "attribute": "Light Kit",
+          "type": "Feature",
+          "decision_question": "Should the fan include a light kit?",
+          "values": [
+            {
+              "label": "No light kit",
+              "match_terms": [
+                "no light",
+                "without light"
+              ],
+              "recommendation": "Keep the SKU fan-only when competitor demand is strongest for airflow-first products or when Sunco wants to avoid lighting-spec complexity."
+            },
+            {
+              "label": "Integrated light kit",
+              "match_terms": [
+                "light kit",
+                "with light",
+                "integrated led light",
+                "fan light"
+              ],
+              "recommendation": "Include a light kit when the winning competitor set uses lighting as a core customer filter; only then should CCT and lumen choices drive the spec."
+            }
+          ]
+        },
+        {
+          "attribute": "Ratings / Certifications",
+          "type": "Mixed",
+          "decision_question": "Which rating and compliance claims should be requested?",
+          "values": [
+            {
+              "label": "ETL",
+              "matcher": "certification",
+              "recommendation": "Request ETL/UL support for the fan motor/electrical assembly before RFQ release."
+            },
+            {
+              "label": "UL",
+              "matcher": "certification",
+              "recommendation": "Request ETL/UL support for the fan motor/electrical assembly before RFQ release."
+            },
+            {
+              "label": "FCC",
+              "matcher": "certification",
+              "recommendation": "Request FCC support when the SKU includes remote, RF, Wi-Fi, or app controls."
+            },
+            {
+              "label": "Damp rated",
+              "match_terms": [
+                "damp rated",
+                "damp"
+              ],
+              "recommendation": "Use damp rating when the opportunity targets covered patios, bathrooms, or humid interior locations."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bathroom_fan_attributes",
+      "label": "Bathroom Exhaust Fan Attribute Decisions",
+      "profile_ids": [
+        "bathroom_exhaust_fan"
+      ],
+      "category_matches": [
+        "Bathroom Fans"
+      ],
+      "match_keywords": [
+        "bathroom fan",
+        "exhaust fan",
+        "ventilation fan",
+        "cfm",
+        "sone",
+        "humidity"
+      ],
+      "baseline_attributes": [
+        {
+          "attribute": "Product Boundary",
+          "label": "Bathroom exhaust fan, not ceiling fan",
+          "type": "Baseline",
+          "match_terms": [
+            "bathroom fan",
+            "exhaust fan",
+            "ventilation fan"
+          ],
+          "recommendation": "Treat this as an exhaust/ventilation decision. Do not use residential ceiling-fan blade span or light-kit assumptions unless Step 1 explicitly names them.",
+          "notes": "Bathroom fans should evaluate CFM, sound, controls, and bathroom code/channel fit before decorative ceiling-fan attributes."
+        }
+      ],
+      "attribute_groups": [
+        {
+          "attribute": "Airflow / Sound",
+          "type": "Feature",
+          "decision_question": "Which airflow and noise targets should this SKU use?",
+          "values": [
+            {
+              "label": "CFM airflow",
+              "match_terms": [
+                "cfm"
+              ],
+              "recommendation": "Use CFM as the primary performance target and compare against room-size norms in the competitor set."
+            },
+            {
+              "label": "Low sone rating",
+              "match_terms": [
+                "sone",
+                "quiet",
+                "ultra quiet"
+              ],
+              "recommendation": "Use low-noise positioning when competitor demand supports a premium quiet bathroom-fan story."
+            }
+          ]
+        },
+        {
+          "attribute": "Controls",
+          "type": "Feature",
+          "decision_question": "Which bathroom control behavior should be scoped?",
+          "values": [
+            {
+              "label": "Humidity sensor",
+              "match_terms": [
+                "humidity"
+              ],
+              "recommendation": "Include humidity sensing when direct competitors treat automatic moisture control as a buying filter."
+            },
+            {
+              "label": "Motion sensor",
+              "match_terms": [
+                "motion",
+                "occupancy"
+              ],
+              "recommendation": "Use motion sensing only when the market evidence supports control convenience over cost simplicity."
+            },
+            {
+              "label": "Timer control",
+              "match_terms": [
+                "timer",
+                "delay off"
+              ],
+              "recommendation": "Keep timer behavior in scope when competitor examples emphasize automated shutoff."
+            }
+          ]
+        },
+        {
+          "attribute": "Ratings / Certifications",
+          "type": "Mixed",
+          "decision_question": "Which fan listing and channel claims should be requested?",
+          "values": [
+            {
+              "label": "UL",
+              "matcher": "certification",
+              "recommendation": "Request UL/ETL bathroom exhaust fan listing support before RFQ release."
+            },
+            {
+              "label": "ETL",
+              "matcher": "certification",
+              "recommendation": "Request UL/ETL bathroom exhaust fan listing support before RFQ release."
+            },
+            {
+              "label": "Energy Star",
+              "matcher": "certification",
+              "recommendation": "Request Energy Star only if the target channel or competitor set supports rebate/efficiency positioning."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "generic_lighting_attributes",
       "label": "Generic Lighting Attribute Decisions",
       "profile_ids": [

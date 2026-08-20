@@ -1,7 +1,7 @@
 # Step 2 Improvement Tracker
 
-Last updated: 2026-07-22
-Branch: `codex/step2-sku-normalizer`
+Last updated: 2026-08-20
+Branch: `main`
 
 ## Core Purpose
 
@@ -136,6 +136,9 @@ Implementation notes:
 - Form-factor inference honors `form_factor_terms` from the selected category profile before applying generic integrated LED fallbacks.
 - Decorative fixture enrichment no longer writes `Bulb-dependent` into PRD-facing spec cells.
 - Step 2 no longer falls back to the old `schema_references` ideation template when the maintained template is missing.
+- Residential Fans, Commercial Fans, and Bathroom Fans now have explicit category profiles so fan concepts do not inherit integrated LED luminaire defaults.
+- Reference SKU parsing now rejects generic prose labels such as `case:` unless the token has a SKU-like shape and survives line-review canonicalization.
+- Step 3 fan profiles now separate ceiling fans from bathroom exhaust fans so Section F evaluates fan-specific signals such as blade span, DC motor, remote/reversible control, CFM, sones, and humidity sensing.
 
 ### 5. Source Link and Evidence Preservation
 

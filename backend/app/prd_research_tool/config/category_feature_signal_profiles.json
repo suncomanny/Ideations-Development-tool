@@ -257,6 +257,140 @@
       "max_features": 12
     },
     {
+      "id": "ceiling_fan",
+      "label": "Ceiling fan SKU signals",
+      "category_matches": ["Residential Fans", "Commercial Fans"],
+      "subcategory_matches": ["Residential Fans", "Commercial Fans"],
+      "match_keywords": [
+        "ceiling fan",
+        "residential fan",
+        "commercial fan",
+        "fan light kit",
+        "low profile",
+        "flush mount",
+        "downrod",
+        "dc motor",
+        "remote"
+      ],
+      "static_features": [],
+      "feature_fields": [
+        {
+          "path": "identity.ideation_name",
+          "extractors": ["fan_size", "fan_features", "finish_keywords", "mounting_keywords"]
+        },
+        {
+          "path": "physical.size_form_factor",
+          "extractors": ["fan_size", "fan_features"]
+        },
+        {
+          "path": "physical.mounting_type",
+          "extractors": ["mounting_keywords"]
+        },
+        {
+          "path": "electrical.driver_type",
+          "extractors": ["motor_keywords"]
+        },
+        {
+          "path": "controls.dimming_type",
+          "extractors": ["control_keywords"]
+        },
+        {
+          "path": "physical.finish_color",
+          "extractors": ["finish_keywords"]
+        }
+      ],
+      "fan_features": {
+        "light kit": "light kit",
+        "with light": "light kit",
+        "remote": "remote control",
+        "reversible": "reversible motor",
+        "damp": "damp rated",
+        "wet": "wet rated"
+      },
+      "fan_size": {},
+      "motor_keywords": {
+        "dc motor": "DC motor",
+        "ac motor": "AC motor"
+      },
+      "control_keywords": {
+        "remote": "remote control",
+        "smart": "smart control",
+        "wifi": "Wi-Fi control",
+        "wi-fi": "Wi-Fi control"
+      },
+      "mounting_keywords": {
+        "flush mount": "flush mount",
+        "low profile": "low profile",
+        "hugger": "hugger / low profile",
+        "downrod": "downrod mount",
+        "dual mount": "dual mount"
+      },
+      "finish_keywords": {
+        "matte black": "matte black",
+        "black": "black",
+        "white": "white",
+        "bronze": "bronze",
+        "nickel": "nickel",
+        "wood": "wood-look blade"
+      },
+      "material_keywords": {},
+      "max_features": 12
+    },
+    {
+      "id": "bathroom_exhaust_fan",
+      "label": "Bathroom exhaust fan SKU signals",
+      "category_matches": ["Bathroom Fans"],
+      "subcategory_matches": ["Bathroom Fans"],
+      "match_keywords": [
+        "bathroom fan",
+        "exhaust fan",
+        "ventilation fan",
+        "humidity sensor",
+        "cfm",
+        "sone"
+      ],
+      "static_features": [],
+      "feature_fields": [
+        {
+          "path": "identity.ideation_name",
+          "extractors": ["bathroom_fan_features", "control_keywords"]
+        },
+        {
+          "path": "physical.size_form_factor",
+          "extractors": ["bathroom_fan_features"]
+        },
+        {
+          "path": "electrical.efficiency",
+          "extractors": ["bathroom_fan_features"]
+        },
+        {
+          "path": "controls.dimming_type",
+          "extractors": ["control_keywords"]
+        }
+      ],
+      "bathroom_fan_features": {
+        "cfm": "CFM airflow",
+        "sone": "sound rating",
+        "humidity": "humidity sensor",
+        "motion": "motion sensor",
+        "light": "light kit"
+      },
+      "control_keywords": {
+        "humidity": "humidity sensor",
+        "motion": "motion sensor",
+        "timer": "timer control",
+        "smart": "smart control"
+      },
+      "style_keywords": {},
+      "finish_keywords": {},
+      "material_keywords": {},
+      "mounting_keywords": {
+        "ceiling": "ceiling mount",
+        "retrofit": "retrofit install"
+      },
+      "max_features": 10
+    },
+    {
       "id": "generic_lighting",
       "label": "Generic lighting SKU signals",
       "match_keywords": [],

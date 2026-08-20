@@ -116,6 +116,60 @@ def _write_step1_smoke_workbook(paths: ProjectPaths) -> Path:
     return output
 
 
+def _write_residential_fans_step1_smoke_workbook(paths: ProjectPaths) -> Path:
+    folder = paths.cache / "smoke_tests" / "step2_sku_normalizer"
+    folder.mkdir(parents=True, exist_ok=True)
+    output = folder / f"residential_fans_step1_smoke_{timestamp()}.xlsx"
+
+    workbook = Workbook()
+    ws = workbook.active
+    ws.title = "Recommendations"
+    ws.append([
+        "Recommendation",
+        "Subcategory",
+        "Priority",
+        "Confidence",
+        "Competitor / Ecommerce Example",
+        "Review Link",
+        "Sunco Active-Catalog Check",
+        "Why This Is A True Gap",
+        "PM Action",
+    ])
+    ws.append([
+        "NPD: 52 inch ceiling fan with DC motor, remote control, reversible motor, matte black",
+        "Residential Fans",
+        "High",
+        "High",
+        "Verified competitor example: 52 inch indoor ceiling fan with remote and DC motor.",
+        "",
+        "Product case: no active Sunco ceiling fan SKU identified in this smoke fixture.",
+        (
+            "Step 1 evidence names a 52 inch ceiling fan, 3-blade format, DC motor, "
+            "remote control, reversible motor, and matte black finish. The concept is fan-only "
+            "and does not include a light kit."
+        ),
+        "Move forward as a fan-only NPD concept.",
+    ])
+
+    amazon = workbook.create_sheet("Amazon Recommendations")
+    amazon.append([
+        "Amazon-channel recommendation",
+        "Subcategory",
+        "Priority",
+        "Confidence",
+        "Example listing",
+        "Review link",
+        "Sunco Amazon coverage check",
+        "Stackline / Amazon evidence",
+        "PM action",
+        "Amazon classification",
+    ])
+
+    workbook.save(output)
+    workbook.close()
+    return output
+
+
 def _filled_ideation_rows(workbook_path: Path) -> list[dict[str, str]]:
     workbook = load_workbook(workbook_path, data_only=True)
     ws = workbook["Ideations"]
@@ -128,9 +182,13 @@ def _filled_ideation_rows(workbook_path: Path) -> list[dict[str, str]]:
             "name": str(name),
             "reference_sku": str(ws.cell(row_index, 4).value or ""),
             "action": str(ws.cell(row_index, 6).value or ""),
+            "cct": str(ws.cell(row_index, 11).value or ""),
             "wattage": str(ws.cell(row_index, 8).value or ""),
             "lumens": str(ws.cell(row_index, 15).value or ""),
+            "driver_type": str(ws.cell(row_index, 21).value or ""),
             "form_factor": str(ws.cell(row_index, 22).value or ""),
+            "mounting": str(ws.cell(row_index, 23).value or ""),
+            "efficiency": str(ws.cell(row_index, 16).value or ""),
             "notes": str(ws.cell(row_index, 54).value or ""),
         })
     workbook.close()
@@ -191,9 +249,32 @@ def main() -> int:
     if hits:
         raise AssertionError("Banned Step 2 wording found: " + ", ".join(hits))
 
+    fans_category = _category_by_slug(paths, "residential_fans")
+    fans_step1_workbook = _write_residential_fans_step1_smoke_workbook(paths)
+    fans_step2_workbook, fan_issues = generate_prd_ideation_workbook(paths, fans_category, fans_step1_workbook)
+    if any(not issue.startswith(expected_validation_notes) for issue in fan_issues):
+        raise AssertionError("Residential Fans Step 2 validation issues: " + " | ".join(fan_issues))
+    fan_rows = _filled_ideation_rows(fans_step2_workbook)
+    if len(fan_rows) != 1:
+        raise AssertionError(f"Expected 1 Residential Fans Step 2 row, found {len(fan_rows)}")
+    fan_row = fan_rows[0]
+    if fan_row["reference_sku"].strip().lower() == "case":
+        raise AssertionError("Residential Fans parser incorrectly accepted prose label 'case' as a Reference SKU")
+    if "ceiling fan" not in fan_row["form_factor"].lower() or "52 in" not in fan_row["form_factor"].lower():
+        raise AssertionError(f"Residential Fans form factor did not preserve fan size/category: {fan_row['form_factor']}")
+    if "integrated led fixture" in fan_row["form_factor"].lower() or "lumen output target" in fan_row["lumens"].lower():
+        raise AssertionError("Residential Fans row inherited integrated LED fixture defaults")
+    if fan_row["lumens"]:
+        raise AssertionError(f"Fan-only Residential Fans concept should not get lumens: {fan_row['lumens']}")
+    if "DC Motor" not in fan_row["name"] or "Remote Control" not in fan_row["name"]:
+        raise AssertionError(f"Residential Fans ideation name missed fan SKU-defining features: {fan_row['name']}")
+
     print(f"Step 1 smoke workbook: {step1_workbook}")
     print(f"Step 2 smoke workbook: {step2_workbook}")
     print(f"Rows: {len(rows)} ({', '.join(actions)})")
+    print(f"Residential Fans Step 1 smoke workbook: {fans_step1_workbook}")
+    print(f"Residential Fans Step 2 smoke workbook: {fans_step2_workbook}")
+    print(f"Residential Fans row: {fan_row['name']} | Reference SKU: {fan_row['reference_sku']}")
     if issues:
         print("Validation notes:")
         for issue in issues:

@@ -446,7 +446,6 @@
         "Outdoor Fixtures"
       ],
       "subcategory_matches": [
-        "Bathroom Fans",
         "Ceiling Fixtures",
         "Chandeliers",
         "Pendants",
@@ -461,8 +460,7 @@
         "chandelier",
         "wagon wheel",
         "linear island",
-        "sconce",
-        "bathroom fan"
+        "sconce"
       ],
       "decision_lens": "Prioritize fit, finish, install path, and mainstream residential pricing before niche performance extras.",
       "primary_features": [
@@ -483,6 +481,102 @@
         "FCC"
       ],
       "low_signal_features": []
+    },
+    {
+      "id": "ceiling_fan",
+      "label": "Ceiling Fans",
+      "category_matches": [
+        "Residential Fans",
+        "Commercial Fans"
+      ],
+      "subcategory_matches": [
+        "Residential Fans",
+        "Commercial Fans"
+      ],
+      "match_keywords": [
+        "ceiling fan",
+        "residential fan",
+        "commercial fan",
+        "fan light kit",
+        "blade span",
+        "low profile",
+        "flush mount",
+        "downrod",
+        "dc motor",
+        "remote"
+      ],
+      "decision_lens": "Prioritize blade span, room-fit format, motor/control package, and rating before lighting-spec details. Only evaluate CCT and lumens when the concept includes a light kit.",
+      "primary_features": [
+        "blade span",
+        "DC motor",
+        "remote control",
+        "reversible motor"
+      ],
+      "primary_certifications": [
+        "UL",
+        "ETL"
+      ],
+      "primary_numeric": [
+        "Blade Span",
+        "Airflow CFM"
+      ],
+      "secondary_features": [
+        "light kit",
+        "damp rated",
+        "smart control"
+      ],
+      "secondary_certifications": [
+        "FCC"
+      ],
+      "low_signal_features": [
+        "selectable CCT",
+        "Lumens"
+      ]
+    },
+    {
+      "id": "bathroom_exhaust_fan",
+      "label": "Bathroom Exhaust Fans",
+      "category_matches": [
+        "Bathroom Fans"
+      ],
+      "subcategory_matches": [
+        "Bathroom Fans"
+      ],
+      "match_keywords": [
+        "bathroom fan",
+        "exhaust fan",
+        "ventilation fan",
+        "humidity sensor",
+        "cfm",
+        "sone"
+      ],
+      "decision_lens": "Prioritize airflow, sound rating, humidity/control behavior, and bathroom safety listing before decorative or light-kit details.",
+      "primary_features": [
+        "CFM airflow",
+        "low sone rating",
+        "humidity sensor"
+      ],
+      "primary_certifications": [
+        "UL",
+        "ETL"
+      ],
+      "primary_numeric": [
+        "Airflow CFM",
+        "Sones"
+      ],
+      "secondary_features": [
+        "motion sensor",
+        "timer control",
+        "light kit"
+      ],
+      "secondary_certifications": [
+        "Energy Star",
+        "FCC"
+      ],
+      "low_signal_features": [
+        "selectable CCT",
+        "Lumens"
+      ]
     },
     {
       "id": "electrical_controls_accessory",

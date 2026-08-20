@@ -611,6 +611,35 @@ def extract_lengths(text: str) -> list[str]:
     )
 
 
+def extract_fan_sizes(text: str) -> list[str]:
+    labels: list[str] = []
+    for match in re.finditer(
+        r"\b([2-8][0-9](?:\.\d+)?)\s*(?:in|inch|inches|\")?\s*(?:ceiling\s*)?(?:fan|blade|span)\b|"
+        r"\b(?:fan|blade|span)\s*(?:diameter|size|span)?\s*[:=]?\s*([2-8][0-9](?:\.\d+)?)\s*(?:in|inch|inches|\")\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        raw = match.group(1) or match.group(2)
+        if raw:
+            labels.append(f"{float(raw):g} in blade span")
+    for match in re.finditer(r"\b([2-9])\s*(?:-| )?blade\b|\b([2-9])\s*blades\b", text, flags=re.IGNORECASE):
+        raw = match.group(1) or match.group(2)
+        if raw:
+            labels.append(f"{raw}-blade")
+    return unique_preserve_order(labels)
+
+
+def extract_airflow_sound_values(text: str) -> list[str]:
+    labels: list[str] = []
+    for match in re.finditer(r"\b([0-9][0-9,]*(?:\.\d+)?)\s*cfm\b", text, flags=re.IGNORECASE):
+        value = parse_number(match.group(1))
+        if value:
+            labels.append(f"{value:,.0f} CFM")
+    for match in re.finditer(r"\b([0-9](?:\.\d+)?)\s*sone?s?\b", text, flags=re.IGNORECASE):
+        labels.append(f"{match.group(1)} sones")
+    return unique_preserve_order(labels)
+
+
 def extract_keyword_labels(text: str, keyword_map: dict[str, str]) -> list[str]:
     normalized = label_key(text)
     labels = []
@@ -645,6 +674,9 @@ def dynamic_feature_labels(ideation: dict[str, Any]) -> list[str]:
         "emergency_keywords": profile.get("emergency_keywords") or {},
         "color_mode_keywords": profile.get("color_mode_keywords") or {},
         "certification_keywords": profile.get("certification_keywords") or {},
+        "fan_features": profile.get("fan_features") or {},
+        "motor_keywords": profile.get("motor_keywords") or {},
+        "bathroom_fan_features": profile.get("bathroom_fan_features") or {},
     }
 
     for field in profile.get("feature_fields") or []:
@@ -662,6 +694,10 @@ def dynamic_feature_labels(ideation: dict[str, Any]) -> list[str]:
                 labels.extend(extract_pack_counts(text))
             elif extractor == "length":
                 labels.extend(extract_lengths(text))
+            elif extractor == "fan_size":
+                labels.extend(extract_fan_sizes(text))
+            elif extractor == "airflow_sound":
+                labels.extend(extract_airflow_sound_values(text))
             elif extractor in extractor_maps:
                 labels.extend(extract_keyword_labels(text, extractor_maps[extractor]))
 
