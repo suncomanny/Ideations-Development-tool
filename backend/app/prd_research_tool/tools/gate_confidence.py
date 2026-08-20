@@ -8,6 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from reference_state import NO_CURRENT_SUNCO_STATUS, is_no_current_sunco_sku
+
 
 RUBRIC_PATH = Path(__file__).resolve().parents[1] / "config" / "gate_readiness_rubric.json"
 GATE_ORDER = {"G1": 1, "G2": 2, "G3": 3, "G4": 4, "G5": 5}
@@ -95,8 +97,11 @@ def family_state(packet: dict[str, Any]) -> str:
     reference = as_dict(packet.get("reference_baseline"))
     reference_sku = normalize_text(reference.get("sku") or identity.get("sunco_reference_sku"))
     reference_source = (normalize_text(identity.get("reference_sku_source")) or "").lower()
+    reference_status = normalize_text(identity.get("reference_sku_status"))
 
-    if "new" in reference_source and "existing" not in reference_source:
+    if reference_status == NO_CURRENT_SUNCO_STATUS or is_no_current_sunco_sku(reference_sku):
+        return "new"
+    if "no current sunco" in reference_source or "category-entry npd" in reference_source:
         return "new"
     if "existing catalog" in reference_source or reference_sku:
         return "known"

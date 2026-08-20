@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from gate_confidence import build_gate_readiness, build_highest_impact_vendor_requests as build_base_vendor_requests
+from reference_state import NO_CURRENT_SUNCO_STATUS, is_no_current_sunco_sku
 from research_session_manager import (
     SCHEMA_VERSION,
     artifact_path_for,
@@ -1510,6 +1511,21 @@ def build_performance_estimation(
 
 def build_reference_anchor_context(packet: dict[str, Any]) -> dict[str, Any]:
     """Explain how the reference SKU should be used in downstream reasoning."""
+    identity = as_dict(packet.get("identity"))
+    if (
+        identity.get("reference_sku_status") == NO_CURRENT_SUNCO_STATUS
+        or is_no_current_sunco_sku(identity.get("sunco_reference_sku"))
+    ):
+        return compact_dict(
+            {
+                "anchor_role": "no_current_sunco_anchor",
+                "primary_use": "Treat this as a category-entry NPD case. There is no current Sunco SKU anchor to use for direct comparison.",
+                "secondary_use": "Use market demand, competitor examples, and category fit to size the opportunity instead of adjacent Sunco lighting-family sales.",
+                "do_not_overweight": "Do not use an adjacent Sunco lighting family as evidence of current category coverage.",
+                "data_quality": "no_current_sunco_anchor",
+                "caution": "Step 3 skipped Reference SKU lookup because Step 2 marked this row as no current Sunco SKU.",
+            }
+        )
     reference = as_dict(packet.get("reference_baseline"))
     shopify_revenue = parse_number(reference.get("shopify_revenue_12mo"))
     amazon_revenue = parse_number(reference.get("amazon_revenue_12mo"))

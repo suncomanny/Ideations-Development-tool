@@ -18,6 +18,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+from reference_state import is_no_current_sunco_sku
 from sku_lookup import build_mcp_queries, default_sales_window, strip_pack_suffix
 from template_parser import DEFAULT_WORKBOOK, SHEET_NAME, detect_template_layout, normalize_header
 
@@ -63,6 +64,8 @@ def collect_reference_rows_from_session(session_dir: Path) -> list[dict[str, Any
         if not sku or row_number is None:
             continue
         normalized_sku = str(sku).strip().upper()
+        if is_no_current_sunco_sku(normalized_sku):
+            continue
         entry = references.setdefault(
             normalized_sku,
             {
@@ -108,6 +111,8 @@ def collect_reference_rows_from_workbook(workbook_path: Path, sheet_name: str) -
             continue
         normalized_sku = str(raw_value).strip().upper()
         if not normalized_sku:
+            continue
+        if is_no_current_sunco_sku(normalized_sku):
             continue
         entry = references.setdefault(
             normalized_sku,

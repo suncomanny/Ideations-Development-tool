@@ -32,6 +32,7 @@ from approved_competitor_sources import (
     load_approved_competitor_sources,
     source_search_link,
 )
+from reference_state import display_reference_sku, is_no_current_sunco_sku
 from research_session_manager import artifact_path_for, packet_path_for, read_json, update_session
 
 
@@ -256,6 +257,16 @@ def normalize_text(value: Any) -> str:
     return fix_ordinal_suffixes(text)
 
 
+def reference_anchor_label(identity: dict[str, Any], reference: dict[str, Any] | None = None) -> str:
+    """Return the PM-facing closest Sunco anchor label."""
+    raw_sku = identity.get("sunco_reference_sku")
+    sku = normalize_text(display_reference_sku(raw_sku))
+    if is_no_current_sunco_sku(raw_sku):
+        return sku
+    title = normalize_text(as_dict(reference).get("title"))
+    return f"{sku} - {title}".strip(" -")
+
+
 def ordinal_suffix(number: int) -> str:
     """Return the English ordinal suffix for small display strings."""
     if 10 <= number % 100 <= 20:
@@ -462,7 +473,7 @@ def context_text_for_packet(packet: dict[str, Any]) -> str:
         identity.get("ideation_name"),
         identity.get("category"),
         identity.get("subcategory"),
-        identity.get("sunco_reference_sku"),
+        None if is_no_current_sunco_sku(identity.get("sunco_reference_sku")) else identity.get("sunco_reference_sku"),
         electrical.get("wattage_primary"),
         electrical.get("wattage_max"),
         electrical.get("cct_primary"),
@@ -483,7 +494,7 @@ def preferred_product_type_code(packet: dict[str, Any]) -> str:
     category_slug = slugify(identity.get("subcategory") or identity.get("category"))
     rows = decoder_rows_for(category_slug, "product_type")
     context = context_text_for_packet(packet).lower()
-    reference_sku = normalize_text(identity.get("sunco_reference_sku")).upper()
+    reference_sku = "" if is_no_current_sunco_sku(identity.get("sunco_reference_sku")) else normalize_text(identity.get("sunco_reference_sku")).upper()
 
     if category_slug == "wraparounds":
         if re.search(r"\b2\s*(?:ft|foot|feet)\b|\b2ft\b", context):
@@ -1175,7 +1186,7 @@ def opportunity_type_for(packet: dict[str, Any], analysis: dict[str, Any] | None
             return normalized
 
     sunco_coverage = normalize_text(evidence.get("sunco_coverage")).lower()
-    has_anchor = bool(normalize_text(identity.get("sunco_reference_sku")))
+    has_anchor = bool(normalize_text(identity.get("sunco_reference_sku"))) and not is_no_current_sunco_sku(identity.get("sunco_reference_sku"))
     if "0 strong" in sunco_coverage or "assortment gap" in sunco_coverage:
         return "New variant opportunity"
     if has_anchor:
@@ -1307,7 +1318,7 @@ def product_difference_summary(packet: dict[str, Any], analysis: dict[str, Any])
     anchor_context = " ".join(
         normalize_text(value)
         for value in [
-            identity.get("sunco_reference_sku"),
+            None if is_no_current_sunco_sku(identity.get("sunco_reference_sku")) else identity.get("sunco_reference_sku"),
             reference.get("title"),
             reference.get("product_type"),
         ]
@@ -1363,7 +1374,7 @@ def revision_target_sku(packet: dict[str, Any], analysis: dict[str, Any] | None 
     evidence = extract_research_note_evidence(packet)
     for value in [evidence.get("revision_target_sku"), identity.get("sunco_reference_sku")]:
         text = normalize_text(value)
-        if text and not text.lower().startswith("tbd"):
+        if text and not text.lower().startswith("tbd") and not is_no_current_sunco_sku(text):
             return text
     return "matched active Sunco SKU/family"
 
@@ -1555,7 +1566,7 @@ def leadership_brief_rows(
         ("Naming Basis", "SKU Decoder product type + Step 2 target specs; tracking name only, not a final SKU."),
         ("Gap Reason", product_fit_classification(packet)),
         ("Channel Strategy", channel_strategy(packet, analysis)),
-        ("Closest Sunco / NSL Anchor", f"{normalize_text(identity.get('sunco_reference_sku'))} - {normalize_text(reference.get('title'))}"),
+        ("Closest Sunco / NSL Anchor", reference_anchor_label(identity, reference)),
         ("Difference vs Current Sunco", product_difference_summary(packet, analysis)),
         ("Related Sunco Sales Trend", related_sunco_sales_trend(reference)),
         ("Related Sales Caution", related_sales_caution(reference)),
@@ -1853,7 +1864,7 @@ def pm_decision_snapshot_rows(
         ],
         [
             "Closest Sunco / NSL Anchor",
-            f"{normalize_text(identity.get('sunco_reference_sku'))} - {normalize_text(reference.get('title'))}".strip(" -"),
+            reference_anchor_label(identity, reference),
             evidence_strength,
             related_sunco_sales_trend(reference),
             "",
@@ -2082,7 +2093,7 @@ def sunco_coverage_decision_rows(packet: dict[str, Any], analysis: dict[str, Any
         trend_note = "12-month revenue is available, but monthly trend was not refreshed for this run."
     return [
         [
-            identity.get("sunco_reference_sku"),
+            display_reference_sku(identity.get("sunco_reference_sku")),
             reference.get("title"),
             reference.get("shopify_revenue_12mo"),
             reference.get("shopify_units_12mo"),
@@ -3328,7 +3339,7 @@ def render_row_sheet(
         ("Category Owner", identity.get("category_owner")),
         ("Category", identity.get("category")),
         ("Subcategory", identity.get("subcategory")),
-        ("Reference Anchor SKU", identity.get("sunco_reference_sku")),
+        ("Reference Anchor SKU", display_reference_sku(identity.get("sunco_reference_sku"))),
         ("Reference Anchor Product", reference.get("title")),
         ("Anchor Listing Price", reference.get("listing_price")),
         ("Anchor Shopify Revenue 12mo", reference.get("shopify_revenue_12mo")),
@@ -4007,7 +4018,7 @@ def render_slide_summary_sheet(
         ["Comparable SKU", "Shopify Rev", "Amazon Rev", "Price"],
         [
             [
-                identity.get("sunco_reference_sku"),
+                display_reference_sku(identity.get("sunco_reference_sku")),
                 reference.get("shopify_revenue_12mo"),
                 reference.get("amazon_revenue_12mo"),
                 reference.get("listing_price"),
@@ -4045,7 +4056,7 @@ def render_slide_summary_sheet(
         ["Comparable SKU", "Shopify Rev", "Amazon Rev", "Shopify Units", "Amazon Units", "Sale Price", "Trend / Caveat"],
         [
             [
-                identity.get("sunco_reference_sku"),
+                display_reference_sku(identity.get("sunco_reference_sku")),
                 reference.get("shopify_revenue_12mo"),
                 reference.get("amazon_revenue_12mo"),
                 reference.get("shopify_units_12mo"),

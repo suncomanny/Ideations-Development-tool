@@ -18,6 +18,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+from reference_state import NO_CURRENT_SUNCO_STATUS, is_no_current_sunco_sku
 from redshift_stackline_cache import analyze_redshift_stackline_cache_for_subcategory
 from sku_lookup import build_mcp_queries, lookup_from_csv, merge_postgres_data
 
@@ -456,7 +457,10 @@ def parse_template(
 
         reference_context = None
         normalized_sku = None
-        if reference_sku:
+        if is_no_current_sunco_sku(reference_sku):
+            identity["reference_sku_status"] = NO_CURRENT_SUNCO_STATUS
+            identity["reference_sku_lookup_skipped"] = True
+        elif reference_sku:
             normalized_sku = str(reference_sku).strip().upper()
             reference_context = lookup_from_csv(normalized_sku)
 

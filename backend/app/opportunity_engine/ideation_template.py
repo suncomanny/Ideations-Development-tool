@@ -117,6 +117,7 @@ ACTION_SORT_ORDER = {
     ACTION_CONCEPT_REVIEW: 2,
     ACTION_HOLD: 3,
 }
+NO_CURRENT_SUNCO_SKU = "NO_CURRENT_SUNCO_SKU"
 
 REFERENCE_SKU_STOPWORDS = {
     "active",
@@ -1154,7 +1155,7 @@ def _revision_change_summary(item: dict[str, Any], enriched: dict[str, Any]) -> 
     if enriched.get("strategy") != ACTION_REVISION:
         return None
     target_sku = _cell_text(enriched.get("sunco_reference_sku"))
-    target = target_sku if target_sku and not target_sku.lower().startswith("tbd") else "matched active Sunco SKU/family"
+    target = target_sku if target_sku and not target_sku.lower().startswith("tbd") and target_sku != NO_CURRENT_SUNCO_SKU else "matched active Sunco SKU/family"
     action = _cell_text(item.get("action"))
     if action:
         if action.lower().startswith("revision target"):
@@ -2203,8 +2204,11 @@ def _enrich_item(
         "category": category.run_name,
         "subcategory": defaults.get("subcategory") or category.run_name,
         "ideation_name": _ideation_name_with_action(item, strategy),
-        "sunco_reference_sku": "TBD - use best-selling adjacent Sunco family by category revenue",
-        "reference_sku_source": f"No exact Sunco {category.run_name} SKU identified from Step 1 evidence; use revenue proxy during refresh",
+        "sunco_reference_sku": NO_CURRENT_SUNCO_SKU,
+        "reference_sku_source": (
+            f"No current Sunco {category.run_name} SKU identified from Step 1 evidence; "
+            "treat as category-entry NPD with no existing Sunco anchor."
+        ),
         "strategy": strategy,
         "known_competitors": _build_known_competitors(item),
     }
@@ -2217,6 +2221,8 @@ def _enrich_item(
     elif line_review_reference.get("sku"):
         enriched["sunco_reference_sku"] = line_review_reference["sku"]
         enriched["reference_sku_source"] = _line_review_reference_text(line_review_reference)
+    if enriched.get("sunco_reference_sku") == NO_CURRENT_SUNCO_SKU and enriched.get("strategy") != ACTION_HOLD:
+        enriched["strategy"] = ACTION_NPD
     priority_channels = _priority_channels_from_evidence(item, metrics)
     if priority_channels:
         enriched["priority_channels"] = priority_channels
@@ -2376,7 +2382,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
                 ),
                 _clip_text(" | ".join(str(part) for part in evidence_parts if part)),
                 enriched.get("reference_sku_source")
-                or "Use Sunco.com/Shopify SKU first when available; otherwise use best-selling item by category revenue.",
+                or "Use Sunco.com/Shopify coverage first when available; otherwise mark as no current Sunco SKU.",
                 source_url,
                 url_status,
             ])
@@ -2412,7 +2418,7 @@ def generate_prd_ideation_workbook(paths: ProjectPaths, category: Category, gap_
             ("Pack-size rule", "Pack-size and pack-count recommendations are intentionally excluded from Step 2. Use the separate pack-size recommendation workflow for pack-count decisions."),
             ("Selection rule", "PM row deletion is the gate. Step 2 converts remaining usable Step 1 rows, preserving Priority and Confidence as context instead of using them as hard filters."),
             ("Recommended Product Action rule", "Step 2 uses the controlled PM-facing action vocabulary: NPD, Revision, Concept Review, Hold."),
-            ("Reference SKU rule", "Sunco.com/Shopify coverage first, canonicalized against the Existing SKU Line Review; if absent, use best-selling item by category revenue."),
+            ("Reference SKU rule", f"Sunco.com/Shopify coverage first, canonicalized against the Existing SKU Line Review; if absent, write {NO_CURRENT_SUNCO_SKU} so Step 3 treats the row as NPD with no existing Sunco anchor."),
             ("MSRP target rule", "When market price samples exist, Target MSRP is based on the 50th-55th percentile of comparable listings and is independent from margin targets."),
             ("URL status rule", "Step 2 checks Step 1 review URLs live when the workbook is generated. 2xx/3xx means verified; 403/429 means blocked by retailer/CDN and needs manual browser review; 404/410 means invalid and should be replaced."),
             ("URL status summary", _url_validation_summary(url_validation_cache)),
